@@ -6,6 +6,18 @@ describe("classifySponsorship", () => {
     const r = classifySponsorship("We will not be able to provide Relocation or Sponsorship. Salary Range: $64,491.");
     expect(r.status).toBe("no");
   });
+  it("flags 'will not require work visa sponsorship now or in the future'", () => {
+    // Real WSFS Full Stack Java SWE JD (2026-07) — previously slipped through
+    // because \bsponsor\b never matches "sponsorship".
+    const jd =
+      "WSFS Bank will only consider candidates who are presently authorized to work " +
+      "and who will not require work visa sponsorship from WSFS Bank now or in the future.";
+    expect(classifySponsorship(jd).status).toBe("no");
+  });
+  it("flags 'unable to sponsor' / 'not in a position to sponsor'", () => {
+    expect(classifySponsorship("We are unable to sponsor applicants for this role.").status).toBe("no");
+    expect(classifySponsorship("The company is not in a position to sponsor visas.").status).toBe("no");
+  });
   it("flags 'no sponsorship', 'without sponsorship', citizenship, clearance", () => {
     expect(classifySponsorship("No visa sponsorship is available for this role.").status).toBe("no");
     expect(classifySponsorship("Must be authorized to work in the US without sponsorship.").status).toBe("no");
