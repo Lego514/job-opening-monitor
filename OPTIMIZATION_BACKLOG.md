@@ -35,8 +35,8 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 ## C. Noise / precision
 
 - **C1** `DE_AREA` regex ([index.ts]) matches Newark **NJ**, Wilmington **NC/MA** → out-of-DE roles get the wider filter.
-- **C2** `findSalary` misses `$95K` shorthand; also grabs the first `$` figure (sometimes a benefit, not salary).
-- **C3** `LOCAL_FILTERS` lets clinical roles through ("… Analyst (RN Required)"). Add excludes: `rn`, `nurse`, `clinical`.
+- **C2** `[x]` `findSalary` now handles `$95K`/K-ranges and prefers a range / the largest figure over the first `$` (bonus/hourly). `dollarValue`/`salaryFloor` in rank.ts expand `K`. Known remaining edge: European-formatted comp like Citi's `$107 120,00 - $160 680,00` (space thousands-sep + comma decimal) still parses to `$160` — not worth the i18n-number complexity for a rare listing.
+- **C3** `[x]` `LOCAL_FILTERS` excludes clinical titles (`rn`, `nurse`, `nursing`, `physician`, `pharmacist`, `therapist`); "clinical" left in on purpose ("Clinical Data Analyst" is legit). Verified: the "… Analyst (RN Required)" role no longer matches.
 - **C4** No per-run alert cap → first successful run dumped 231 Wishlist rows into the tracker. Add `MAX_ALERTS_PER_RUN`.
 
 ## D. Robustness

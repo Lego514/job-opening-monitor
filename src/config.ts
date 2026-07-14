@@ -140,8 +140,14 @@ export const LOCAL_FILTERS: MatchFilters = {
     "data scientist", "machine learning", "analyst", "analytics",
     "business intelligence", "reporting", "insights",
   ],
-  // Only exclude clearly executive titles — Senior/Lead/Manager/etc. are allowed for DE.
-  excludeKeywords: ["director", "vp", "head of", "chief", "president", "svp", "evp"],
+  // Exclude executive titles (Senior/Lead/Manager/etc. are allowed for DE) and
+  // clinical roles — the DE net is wide enough to pull hospital jobs from
+  // ChristianaCare/Nemours (e.g. "… Analyst (RN Required)"). "clinical" is left
+  // out on purpose: "Clinical Data Analyst" is a legit data role.
+  excludeKeywords: [
+    "director", "vp", "head of", "chief", "president", "svp", "evp",
+    "rn", "nurse", "nursing", "physician", "pharmacist", "therapist",
+  ],
   allowLocations: FILTERS.allowLocations,
   blockLocations: FILTERS.blockLocations,
 };

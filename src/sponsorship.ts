@@ -4,6 +4,8 @@
 // sponsor, since that's rarely stated). We FLAG rather than silently drop, so a
 // false positive never hides a real opportunity.
 
+import { dollarValue } from "./rank";
+
 const DISQUALIFIERS: [RegExp, string][] = [
   [/\bno\b[^.]{0,25}\bsponsorship\b/i, "no sponsorship"],
   [/\bnot\b[^.]{0,40}\b(?:provide|offer|sponsor)\w*[^.]{0,25}\bsponsorship\b/i, "states it won't provide sponsorship"],
@@ -36,8 +38,19 @@ export function classifySponsorship(description: string): SponsorshipResult {
   return { status: "unknown" };
 }
 
-/** Best-effort salary extraction from JD text, e.g. "$64,491" or "$60,000 - $80,000". */
+/**
+ * Best-effort salary extraction from JD text. Handles "$64,491", "$95K",
+ * "$95k–$120k", and "$60,000 - $80,000". Picks the most salary-like figure —
+ * a range beats a single number, and among those the largest wins — so a
+ * sign-on bonus or hourly rate that appears first doesn't get mistaken for the
+ * salary.
+ */
 export function findSalary(text: string): string | null {
-  const m = /\$\s?[\d,]{3,}(?:\s*(?:-|–|—|to)\s*\$?\s?[\d,]{3,})?/.exec(text);
-  return m ? m[0].replace(/\s+/g, " ").trim() : null;
+  const AMOUNT = String.raw`\$\s?\d[\d,]*(?:\.\d+)?\s?[kK]?`;
+  const re = new RegExp(`${AMOUNT}(?:\\s*(?:-|–|—|to)\\s*${AMOUNT})?`, "g");
+  const cands = [...text.matchAll(re)].map((m) => m[0].replace(/\s+/g, " ").trim());
+  if (cands.length === 0) return null;
+  const isRange = (s: string) => /(?:-|–|—|\bto\b)/.test(s);
+  const score = (s: string) => (isRange(s) ? 1e12 : 0) + (dollarValue(s) ?? 0);
+  return cands.reduce((best, s) => (score(s) > score(best) ? s : best));
 }

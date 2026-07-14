@@ -10,12 +10,20 @@
 export const DE_AREA = /\b(?:delaware|wilmington|newark|philadelphia)\b/i;
 export const isDelaware = (loc: string | null | undefined): boolean => DE_AREA.test(loc ?? "");
 
-/** Lower bound of a parsed salary string (e.g. "$95,000 - $120,000" -> 95000). */
-export function salaryFloor(salary: string | null | undefined): number | null {
-  if (!salary) return null;
-  const m = /\$\s?([\d,]{4,})/.exec(salary);
-  return m ? Number(m[1].replace(/,/g, "")) : null;
+/**
+ * Numeric value of the first dollar amount in a string, expanding a `K` suffix
+ * (e.g. "$95,000" -> 95000, "$95K" -> 95000, "$95k–$120k" -> 95000).
+ */
+export function dollarValue(s: string | null | undefined): number | null {
+  if (!s) return null;
+  const m = /\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kK])?/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, "")) * (m[2] ? 1000 : 1);
+  return Number.isFinite(n) ? n : null;
 }
+
+/** Lower bound of a parsed salary string (e.g. "$95,000 - $120,000" -> 95000). */
+export const salaryFloor = dollarValue;
 
 // Under the FY2027+ wage-weighted H-1B lottery, higher pay = more lottery entries.
 // Rough heuristic from the salary floor (real OEWS wage levels vary by role/metro).

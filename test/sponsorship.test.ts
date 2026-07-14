@@ -36,6 +36,18 @@ describe("findSalary", () => {
     expect(findSalary("Salary Range: $64,491 per year")).toBe("$64,491");
     expect(findSalary("Pay: $60,000 - $80,000")).toBe("$60,000 - $80,000");
   });
+  it("handles $95K shorthand and K ranges", () => {
+    expect(findSalary("Base pay $95K")).toBe("$95K");
+    expect(findSalary("Comp: $95K–$120K")).toBe("$95K–$120K");
+  });
+  it("prefers the salary range over an earlier bonus/hourly figure", () => {
+    expect(findSalary("Sign-on bonus $5,000. Base salary $130,000-$160,000.")).toBe(
+      "$130,000-$160,000",
+    );
+    expect(findSalary("Perks include a $500 stipend. Range $107,600 to $161,400.")).toBe(
+      "$107,600 to $161,400",
+    );
+  });
   it("returns null when there's no salary", () => {
     expect(findSalary("No compensation details here.")).toBeNull();
   });
