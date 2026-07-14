@@ -29,7 +29,10 @@ export function normalizeWorkday(c: CompanySource, raw: WorkdayResponse): Postin
 }
 
 const PAGE = 20; // Workday CXS caps page size at 20
-const MAX_RESULTS = 100; // safety cap per search term
+// Safety cap per search term. Workday sorts by relevance (not date), so at
+// high-volume employers (banks) the newest roles can sit past the first page —
+// keep this generous. Override with WORKDAY_MAX_RESULTS if a tenant is huge.
+const MAX_RESULTS = Number(process.env.WORKDAY_MAX_RESULTS) || 200;
 
 /**
  * Fetch postings for one search term from a Workday tenant's public CXS API

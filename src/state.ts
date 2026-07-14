@@ -17,12 +17,28 @@ function restBase(): string {
   return `${url.replace(/\/$/, "")}/rest/v1`;
 }
 
-/** Set of already-seen posting keys (company-namespaced). */
+/**
+ * Set of already-seen posting keys (company-namespaced).
+ * Paginates: PostgREST caps a response at 1000 rows by default, so a single GET
+ * silently drops older keys once the table grows past 1000 — which would make
+ * old roles look "new" and re-alert. We page with the Range header until a short
+ * page signals the end.
+ */
 export async function loadSeenKeys(): Promise<Set<string>> {
-  const res = await fetch(`${restBase()}/monitor_seen_jobs?select=id`, { headers: sbHeaders() });
-  if (!res.ok) throw new Error(`loadSeen HTTP ${res.status}: ${await res.text()}`);
-  const rows = (await res.json()) as { id: string }[];
-  return new Set(rows.map((r) => r.id));
+  const PAGE = 1000;
+  const keys = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const to = from + PAGE - 1;
+    const res = await fetch(`${restBase()}/monitor_seen_jobs?select=id`, {
+      headers: { ...sbHeaders(), "Range-Unit": "items", Range: `${from}-${to}` },
+    });
+    // PostgREST returns 200 for a full result, 206 for a partial (ranged) one.
+    if (!res.ok && res.status !== 206) throw new Error(`loadSeen HTTP ${res.status}: ${await res.text()}`);
+    const rows = (await res.json()) as { id: string }[];
+    for (const r of rows) keys.add(r.id);
+    if (rows.length < PAGE) break;
+  }
+  return keys;
 }
 
 /** Record postings as seen (idempotent — duplicate keys are ignored). */
