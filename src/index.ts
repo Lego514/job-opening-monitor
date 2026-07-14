@@ -12,6 +12,7 @@ import { sendTelegram } from "./notify/telegram";
 import { sendEmail } from "./notify/email";
 import { selectAlertable } from "./select";
 import { postedDays } from "./recency";
+import { isDelaware, h1bWageHint } from "./rank";
 import { type CompanySource, type Posting, postingKey } from "./types";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -49,6 +50,7 @@ async function collectAll(): Promise<Posting[]> {
   for (const c of COMPANIES) {
     try {
       const postings = await fetchCompany(c);
+      for (const p of postings) p.capExempt = c.capExempt ?? false;
       console.log(`[fetch] ${c.name}: ${postings.length}`);
       all.push(...postings);
     } catch (e) {
@@ -91,24 +93,9 @@ async function enrichAll(posts: Posting[], concurrency = 8): Promise<void> {
   await Promise.all(Array.from({ length: Math.min(concurrency, posts.length) }, worker));
 }
 
-function salaryFloor(salary: string | null | undefined): number | null {
-  if (!salary) return null;
-  const m = /\$\s?([\d,]{4,})/.exec(salary);
-  return m ? Number(m[1].replace(/,/g, "")) : null;
-}
-
-// Under the FY2027+ wage-weighted H-1B lottery, higher pay = more lottery entries.
-// Rough heuristic from the salary floor (real OEWS wage levels vary by role/metro).
-function h1bWageHint(salary: string | null | undefined): string | null {
-  const floor = salaryFloor(salary);
-  if (floor == null) return null;
-  if (floor >= 130000) return "📈 high wage → strong H-1B lottery odds";
-  if (floor >= 105000) return "📈 mid wage → decent H-1B odds";
-  return null;
-}
-
 function metaLine(p: Posting): string {
   return [
+    p.capExempt ? "✅ cap-exempt — no H-1B lottery" : null,
     p.remote ? "🏠 remote-eligible" : null,
     p.salary ? `💲${p.salary}` : null,
     h1bWageHint(p.salary),
@@ -156,8 +143,7 @@ function emailHtml(list: Posting[]): string {
 async function main(): Promise<void> {
   const fetched = await collectAll();
   // Roles in the DE area get the wider filter; everywhere else stays strict.
-  const DE_AREA = /delaware|wilmington|newark|philadelphia/i;
-  const filtersFor = (p: Posting) => (DE_AREA.test(p.location ?? "") ? LOCAL_FILTERS : FILTERS);
+  const filtersFor = (p: Posting) => (isDelaware(p.location) ? LOCAL_FILTERS : FILTERS);
   const prefiltered = dedupe(fetched.filter((p) => matches(p, filtersFor(p))));
   // Recency filter BEFORE enrichment — caps the (now all-US) volume so we only
   // fetch JD details for postings recent enough to be worth alerting on.

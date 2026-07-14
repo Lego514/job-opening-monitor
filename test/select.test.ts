@@ -38,4 +38,13 @@ describe("selectAlertable", () => {
     expect(ids).not.toContain("ok-old"); // 20 days > 7
     expect(ids).not.toContain("flagged-old"); // 40 days > 7
   });
+  it("ranks DE-local, then cap-exempt, then higher wage, above a fresher remote role", () => {
+    const de = { ...mk("de-old", "unknown", "Posted 20 Days Ago"), location: "Wilmington, DE" };
+    const capExempt = { ...mk("cap-old", "unknown", "Posted 20 Days Ago"), location: "Remote", capExempt: true };
+    const highWage = { ...mk("wage-old", "unknown", "Posted 20 Days Ago"), location: "Remote", salary: "$180,000" };
+    const remoteFresh = mk("remote-fresh", "unknown", "Posted Today");
+    const flagged = { ...mk("flagged-de", "no", "Posted Today"), location: "Newark, DE" };
+    const out = selectAlertable([remoteFresh, highWage, capExempt, de, flagged], { skipNoSponsorship: false });
+    expect(out.map((p) => p.id)).toEqual(["de-old", "cap-old", "wage-old", "remote-fresh", "flagged-de"]);
+  });
 });

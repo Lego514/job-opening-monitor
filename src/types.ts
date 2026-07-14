@@ -18,6 +18,10 @@ export interface CompanySource {
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;
+  // H-1B cap-exempt employer (university / affiliated nonprofit / research org):
+  // no lottery needed, so these rank top. Verify per-role — not every req at a
+  // cap-exempt employer is itself cap-exempt.
+  capExempt?: boolean;
 }
 
 /** A normalized job posting from any ATS adapter. */
@@ -35,6 +39,7 @@ export interface Posting {
   remote?: boolean; // JD indicates remote-eligible (passes the location filter)
   detailApi?: string; // adapter-specific detail endpoint (Greenhouse), for enrichment
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
+  capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
 }
 
 /** Stable, company-namespaced key used for dedup + seen-state storage. */
