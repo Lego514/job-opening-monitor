@@ -6,10 +6,12 @@ export const COMPANIES: CompanySource[] = [
   // Workday employers — one adapter covers all. Delaware-relevant pharma / finance / chem.
   { name: "AstraZeneca", ats: "workday", tenant: "astrazeneca", wd: "wd3", site: "Careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Capital One", ats: "workday", tenant: "capitalone", wd: "wd12", site: "Capital_One", everifyGuess: "Yes", sponsorsGuess: "Yes" },
-  { name: "ChristianaCare", ats: "workday", tenant: "christianacare", wd: "wd5", site: "CCHS", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  { name: "ChristianaCare", ats: "workday", tenant: "christianacare", wd: "wd5", site: "CCHS", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
   { name: "DuPont", ats: "workday", tenant: "dupont", wd: "wd5", site: "Jobs", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
   { name: "WSFS Bank", ats: "workday", tenant: "wsfsbank", wd: "wd1", site: "wsfscareers", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
   { name: "M&T Bank", ats: "workday", tenant: "mtb", wd: "wd5", site: "MTB", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  { name: "Barclays", ats: "workday", tenant: "barclays", wd: "wd3", site: "external_career_site_barclays", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Citi", ats: "workday", tenant: "citi", wd: "wd5", site: "2", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Vanguard", ats: "workday", tenant: "vanguard", wd: "wd5", site: "vanguard_external", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
   { name: "Comcast", ats: "workday", tenant: "comcast", wd: "wd5", site: "Comcast_Careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Corteva", ats: "workday", tenant: "corteva", wd: "wd5", site: "Corteva", everifyGuess: "Yes", sponsorsGuess: "Unknown" },

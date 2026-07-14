@@ -4,11 +4,17 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 
 ## Priority order (agreed)
 
-1. **A1** — ISO-date recency parsing (Greenhouse/Lever roles currently bypass the 14-day filter) `[ ]`
-2. **B1** — Add missing strategy-critical sources (banks + cap-exempt employers) `[ ]`
-3. **A2** — Paginate the `seen` load (PostgREST caps at 1000 rows → duplicate alerts once the table grows) `[ ]`
-4. **B2 + B3** — cap-exempt flag + Delaware-first alert ordering `[ ]`
-5. **A3** — Raise Workday per-term result cap (newest bank roles fall past the first 100) `[ ]`
+1. **A1** — ISO-date recency parsing (Greenhouse/Lever roles currently bypass the 14-day filter) `[x]`
+2. **B1** — Add missing strategy-critical sources (banks + cap-exempt employers) `[~]` (Barclays + Citi added; ChristianaCare marked cap-exempt)
+3. **A2** — Paginate the `seen` load (PostgREST caps at 1000 rows → duplicate alerts once the table grows) `[x]`
+4. **B2 + B3** — cap-exempt flag + Delaware-first alert ordering `[x]`
+5. **A3** — Raise Workday per-term result cap (newest bank roles fall past the first 100) `[x]`
+
+### B1 source-verification notes (2026-07-14, probed with the real Node fetch client)
+
+- **Added (verified 200):** Barclays (`barclays/wd3/external_career_site_barclays`, ~431), Citi (`citi/wd5/2`, ~2000). ChristianaCare flagged `capExempt: true`.
+- **Blocked — session handshake required (CXS returns 422 to a plain POST, even for a known job's detail):** Sallie Mae (`sallie-mae/wd5/Careers`), Nemours (`nemours/wd1/careers_at_nemours`), University of Delaware, Truist. These SPAs GET the site first to set a cookie, then send it on the CXS call — needs an adapter that does the cookie handshake.
+- **Other ATS / auth:** Discover (401, needs auth), Best Egg (not on Lever/Greenhouse — find real ATS), JPMC (Oracle Cloud — needs a new adapter; highest value via referral).
 
 ---
 
