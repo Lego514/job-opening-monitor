@@ -96,6 +96,10 @@ export const FILTERS: MatchFilters = {
     "analytics engineer",
     "data analyst",
     "business analyst",
+    "business intelligence",
+    "quantitative analyst",
+    "risk analyst",
+    "credit analyst",
   ],
   // Whole-word excludes. Note: Capital One's "Senior Associate" is actually an
   // early-career tier — remove "senior" here if you want those through.

@@ -9,10 +9,10 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm start
@@ -28,3 +28,5 @@ jobs:
           # Optional behavior (set as repo Variables, not Secrets):
           SKIP_NO_SPONSORSHIP: ${{ vars.SKIP_NO_SPONSORSHIP }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
+          MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
+          WORKDAY_MAX_RESULTS: ${{ vars.WORKDAY_MAX_RESULTS }}

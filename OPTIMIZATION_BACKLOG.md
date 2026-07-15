@@ -30,23 +30,28 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 - **B1** Source list is asymmetric to the 80% DA + Delaware strategy. Missing: JPMC (Oracle — needs adapter), Barclays/Citi/Discover/BofA, cap-exempt Nemours/UD, Sallie Mae, Best Egg. Most are one config line.
 - **B2** No cap-exempt concept. Add `capExempt?: boolean` to `CompanySource`; surface "✅ cap-exempt — no lottery" and rank it top. Matters more than the wage hint for this candidate.
 - **B3** `select.ts` ordering is sponsorable→fresh only. Real priority: DE-local > cap-exempt > high-wage > rest.
-- **B4** Strict `includeKeywords` lacks `quantitative analyst` / `risk analyst` / `credit analyst` / `business intelligence`. The M&T Quant Analyst was only caught because it was in DE (wider filter); the same title elsewhere is missed.
+- **B4** `[x]` Strict `includeKeywords` gained `business intelligence`, `quantitative analyst`, `risk analyst`, `credit analyst` — so DA titles like the M&T Quant Analyst are caught anywhere, not only in the DE wider-filter zone.
 
 ## C. Noise / precision
 
-- **C1** `DE_AREA` regex ([index.ts]) matches Newark **NJ**, Wilmington **NC/MA** → out-of-DE roles get the wider filter.
+- **C1** `[x]` `isDelaware` (rank.ts) is state-aware: a bare ring city (Newark/Wilmington) is rejected when another US state is named (comma-preceded abbrevs, so "in"/"or"/"me" don't false-match). Tested: Newark NJ / Wilmington NC → false.
 - **C2** `[x]` `findSalary` now handles `$95K`/K-ranges and prefers a range / the largest figure over the first `$` (bonus/hourly). `dollarValue`/`salaryFloor` in rank.ts expand `K`. Known remaining edge: European-formatted comp like Citi's `$107 120,00 - $160 680,00` (space thousands-sep + comma decimal) still parses to `$160` — not worth the i18n-number complexity for a rare listing.
 - **C3** `[x]` `LOCAL_FILTERS` excludes clinical titles (`rn`, `nurse`, `nursing`, `physician`, `pharmacist`, `therapist`); "clinical" left in on purpose ("Clinical Data Analyst" is legit). Verified: the "… Analyst (RN Required)" role no longer matches.
-- **C4** No per-run alert cap → first successful run dumped 231 Wishlist rows into the tracker. Add `MAX_ALERTS_PER_RUN`.
+- **C4** `[x]` `MAX_ALERTS_PER_RUN` (default 30) caps Telegram/email volume with a "…and N more — see the tracker" note; the tracker still gets all matches.
 
 ## D. Robustness
 
-- **D1** A permanently-broken source (renamed tenant) fails silently in logs (W.L. Gore / Navient return 0 — verify). Alert after N consecutive failures.
-- **D2** Bad `MAX_AGE_DAYS` env → `NaN` → silently filters out every known-age role. Add a guard.
-- **D3** A failed Workday search term aborts the company's remaining terms (no per-term try/catch).
+- **D1** `[x]` `collectAll` reports hard-failed sources; a Telegram warning fires only when ≥3 fail in one run (systemic), not for a single persistently-broken tenant. (Per-source consecutive-round tracking would need a state table — future.) The W.L. Gore / Navient "returns 0 without error" case is still not distinguishable from "no matching jobs" without a baseline.
+- **D2** `[x]` `intEnv()` guards `MAX_AGE_DAYS` / `MAX_ALERTS_PER_RUN` against NaN / non-positive.
+- **D3** `[x]` A failing Workday search term is caught per-term; the company only hard-fails if every term throws.
 
 ## E. Minor
 
-- **E1** GitHub Actions `checkout@v4`/`setup-node@v4` Node-20 deprecation → bump.
+- **E1** `[x]` Bumped `actions/checkout@v4→v5`, `actions/setup-node@v4→v5`, `node-version 20→22`; exposed `MAX_ALERTS_PER_RUN` / `WORKDAY_MAX_RESULTS` as repo Variables.
 - **E2** Email (Resend) channel unconfigured — Telegram deemed sufficient.
 - **E4** Consider night-time cron downshift (15 min daytime, hourly overnight).
+
+## Remaining / follow-ups
+
+- **B1 leftovers** — JPMC (Oracle Cloud adapter), session-handshake adapter for Sallie Mae / Nemours / UD / Truist, Best Egg ATS.
+- **D1+** — per-source consecutive-failure state table.
