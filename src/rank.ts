@@ -4,11 +4,23 @@
 
 /**
  * Delaware commutable ring — the top-choice location, so DE-local roles rank
- * first and get the wider LOCAL_FILTERS. NOTE (backlog C1): this also matches
- * Newark NJ / Wilmington NC/MA; a state-aware guard is a separate follow-up.
+ * first and get the wider LOCAL_FILTERS. State-aware: Newark is also NJ and
+ * Wilmington is also NC/MA/OH, so a bare ring city only counts when no *other*
+ * US state is named alongside it (DE and PA are fine — PA = Philadelphia ring).
  */
-export const DE_AREA = /\b(?:delaware|wilmington|newark|philadelphia)\b/i;
-export const isDelaware = (loc: string | null | undefined): boolean => DE_AREA.test(loc ?? "");
+const DE_PA_SIGNAL = /\b(?:delaware|philadelphia|pennsylvania)\b|,\s*(?:de|pa)\b/i;
+const RING_CITY = /\b(?:wilmington|newark)\b/i;
+// A US state other than DE/PA disqualifies a bare ring city. Abbrevs must be
+// comma-preceded ("Newark, NJ") so 2-letter state codes don't match English
+// words like "in"/"or"/"me"; spelled-out state names match directly.
+const OTHER_STATE =
+  /,\s*(?:al|ak|az|ar|ca|co|ct|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy|dc)\b|\b(?:new jersey|north carolina|massachusetts|ohio|new york|maryland|virginia)\b/i;
+
+export function isDelaware(loc: string | null | undefined): boolean {
+  const s = loc ?? "";
+  if (DE_PA_SIGNAL.test(s)) return true;
+  return RING_CITY.test(s) && !OTHER_STATE.test(s);
+}
 
 /**
  * Numeric value of the first dollar amount in a string, expanding a `K` suffix

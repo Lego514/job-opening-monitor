@@ -18,8 +18,18 @@ import { type CompanySource, type Posting, postingKey } from "./types";
 const DRY_RUN = process.argv.includes("--dry-run");
 const SEED = process.argv.includes("--seed"); // mark current matches seen, don't alert
 const SKIP_NO_SPONSORSHIP = /^(1|true|yes)$/i.test(process.env.SKIP_NO_SPONSORSHIP ?? "");
+
+/** Parse a positive-integer env var, falling back if unset/invalid (avoids a
+ *  typo'd MAX_AGE_DAYS becoming NaN and silently filtering out every role). */
+function intEnv(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 // Default 14d: with the all-US net, only enrich/alert recent postings (perf + signal).
-const MAX_AGE_DAYS = process.env.MAX_AGE_DAYS ? Number(process.env.MAX_AGE_DAYS) : 14;
+const MAX_AGE_DAYS = intEnv("MAX_AGE_DAYS", 14);
+// Cap how many roles a single run pushes to Telegram/email (the tracker still
+// gets them all) so a backlog can't blast a wall of messages.
+const MAX_ALERTS_PER_RUN = intEnv("MAX_ALERTS_PER_RUN", 30);
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c);
@@ -34,9 +44,20 @@ function dedupe(list: Posting[]): Posting[] {
 async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "workday") {
     const byId = new Map<string, Posting>();
+    let anyOk = false;
+    let lastErr: Error | null = null;
     for (const term of SEARCH_TERMS) {
-      for (const p of await fetchWorkday(c, term)) byId.set(p.id, p);
+      try {
+        for (const p of await fetchWorkday(c, term)) byId.set(p.id, p);
+        anyOk = true;
+      } catch (e) {
+        // One failing search term must not lose the company's other terms.
+        lastErr = e as Error;
+        console.error(`[fetch] ${c.name} (term "${term}"): ${(e as Error).message}`);
+      }
     }
+    // Only surface a hard failure if every term failed (tenant likely broken).
+    if (!anyOk && lastErr) throw lastErr;
     return [...byId.values()];
   }
   if (c.ats === "greenhouse") return fetchGreenhouse(c);
@@ -45,8 +66,14 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   return [];
 }
 
-async function collectAll(): Promise<Posting[]> {
+interface CollectResult {
+  all: Posting[];
+  failed: string[]; // company names whose fetch hard-failed this run
+}
+
+async function collectAll(): Promise<CollectResult> {
   const all: Posting[] = [];
+  const failed: string[] = [];
   for (const c of COMPANIES) {
     try {
       const postings = await fetchCompany(c);
@@ -56,9 +83,10 @@ async function collectAll(): Promise<Posting[]> {
     } catch (e) {
       // One bad source must not abort the whole run.
       console.error(`[fetch] ${c.name}: FAILED — ${(e as Error).message}`);
+      failed.push(c.name);
     }
   }
-  return all;
+  return { all, failed };
 }
 
 /** Fetch the JD and attach sponsorship + salary signals (Workday postings only). */
@@ -113,7 +141,7 @@ function breakdown(list: Posting[]): string {
   return `${actionable} sponsorable, ${list.length - actionable} flagged`;
 }
 
-function telegramMessage(list: Posting[]): string {
+function telegramMessage(list: Posting[], extra = 0): string {
   const lines = list.map((p) => {
     const meta = metaLine(p);
     const tag = p.sponsorship === "no" ? "⛔ " : "";
@@ -123,10 +151,11 @@ function telegramMessage(list: Posting[]): string {
       `\n  ${p.url}`
     );
   });
-  return `🔔 ${list.length} new role(s) — ${breakdown(list)}:\n\n${lines.join("\n\n")}`;
+  const more = extra > 0 ? `\n\n…and ${extra} more — see the tracker.` : "";
+  return `🔔 ${list.length + extra} new role(s) — ${breakdown(list)}:\n\n${lines.join("\n\n")}${more}`;
 }
 
-function emailHtml(list: Posting[]): string {
+function emailHtml(list: Posting[], extra = 0): string {
   const items = list
     .map((p) => {
       const meta = metaLine(p);
@@ -137,11 +166,12 @@ function emailHtml(list: Posting[]): string {
       );
     })
     .join("");
-  return `<p>${list.length} new role(s) matched — ${breakdown(list)}:</p><ul>${items}</ul>`;
+  const more = extra > 0 ? `<p>…and ${extra} more — see the tracker.</p>` : "";
+  return `<p>${list.length + extra} new role(s) matched — ${breakdown(list)}:</p><ul>${items}</ul>${more}`;
 }
 
 async function main(): Promise<void> {
-  const fetched = await collectAll();
+  const { all: fetched, failed } = await collectAll();
   // Roles in the DE area get the wider filter; everywhere else stays strict.
   const filtersFor = (p: Posting) => (isDelaware(p.location) ? LOCAL_FILTERS : FILTERS);
   const prefiltered = dedupe(fetched.filter((p) => matches(p, filtersFor(p))));
@@ -193,14 +223,29 @@ async function main(): Promise<void> {
   const alertable = selectAlertable(fresh, opts);
   console.log(`[diff] ${fresh.length} new; ${alertable.length} to alert.`);
 
-  if (alertable.length > 0) {
-    await sendTelegram(telegramMessage(alertable));
-    await sendEmail(`${alertable.length} new job match(es)`, emailHtml(alertable));
-    await addToTracker(alertable);
-  }
-  // Record ALL fresh (including aged-out / skipped) so they aren't reprocessed.
+  // Record ALL fresh (including aged-out / skipped) BEFORE alerting: if a
+  // downstream alert fails we'd rather miss one than re-blast the whole batch
+  // next run (which is exactly what happened when markSeen ran last).
   await markSeen(fresh);
-  console.log(`[done] alerted ${alertable.length}, recorded ${fresh.length} new.`);
+
+  if (alertable.length > 0) {
+    const shown = alertable.slice(0, MAX_ALERTS_PER_RUN);
+    const extra = alertable.length - shown.length;
+    await addToTracker(alertable); // the tracker gets them all, not just the shown ones
+    await sendTelegram(telegramMessage(shown, extra));
+    await sendEmail(`${alertable.length} new job match(es)`, emailHtml(shown, extra));
+  }
+
+  // Warn only when several sources fail at once (a systemic issue like a network
+  // blip), not for one persistently-broken tenant — that would spam every run.
+  // (Per-source consecutive-failure tracking would need a state table; see backlog.)
+  if (failed.length >= 3) {
+    await sendTelegram(`⚠️ ${failed.length} sources failed to fetch this run: ${failed.join(", ")}`);
+  }
+  console.log(
+    `[done] alerted ${Math.min(alertable.length, MAX_ALERTS_PER_RUN)}/${alertable.length}, recorded ${fresh.length} new` +
+      (failed.length ? `, ${failed.length} sources failed` : "") + ".",
+  );
 }
 
 main().catch((e) => {

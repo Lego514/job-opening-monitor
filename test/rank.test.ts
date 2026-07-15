@@ -29,7 +29,17 @@ describe("isDelaware", () => {
     expect(isDelaware("Wilmington, DE")).toBe(true);
     expect(isDelaware("Newark, DE")).toBe(true);
     expect(isDelaware("Philadelphia, PA")).toBe(true);
+    expect(isDelaware("Delaware, United States")).toBe(true);
     expect(isDelaware("San Francisco, CA")).toBe(false);
     expect(isDelaware("")).toBe(false);
+  });
+  it("rejects same-named cities in other states (C1)", () => {
+    expect(isDelaware("Newark, NJ")).toBe(false);
+    expect(isDelaware("Newark, New Jersey")).toBe(false);
+    expect(isDelaware("Wilmington, NC")).toBe(false);
+    expect(isDelaware("Wilmington, Massachusetts")).toBe(false);
+  });
+  it("keeps a DE role even when a second location names another state", () => {
+    expect(isDelaware("Wilmington, DE · Jersey City, NJ")).toBe(true);
   });
 });
