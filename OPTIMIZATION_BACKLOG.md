@@ -53,5 +53,6 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 
 ## Remaining / follow-ups
 
-- **B1 leftovers** — JPMC (Oracle Cloud adapter), session-handshake adapter for Sallie Mae / Nemours / UD / Truist, Best Egg ATS.
+- **JPMorgan Chase** `[x]` — new Oracle Cloud CE adapter (`adapters/oracle.ts`); polls sites CX_1001 + CX_1002 with pagination, enriches via the CE detail endpoint (sponsorship/salary/remote). Verified live: ~644 fetched, Wilmington/Newark DE roles (incl. Payment Lifecycle / Risk Reporting Analyst) surface with salary + sponsorship flags.
+- **B1 leftovers** — session-handshake adapter for the 422 tenants (Sallie Mae / Nemours / UD / Truist); Best Egg ATS (not on Lever/Greenhouse); Discover (401).
 - **D1+** — per-source consecutive-failure state table.

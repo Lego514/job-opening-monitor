@@ -3,6 +3,7 @@ import { fetchWorkday, fetchJobDetail } from "./adapters/workday";
 import { fetchGreenhouse, fetchGreenhouseDetail } from "./adapters/greenhouse";
 import { fetchLever } from "./adapters/lever";
 import { fetchIcims } from "./adapters/icims";
+import { fetchOracle, fetchOracleDetail } from "./adapters/oracle";
 import { matches, locationAllowed, locationBlocked } from "./match";
 import { classifySponsorship, findSalary } from "./sponsorship";
 import { detectRemote } from "./remote";
@@ -41,25 +42,32 @@ function dedupe(list: Posting[]): Posting[] {
   return [...byKey.values()];
 }
 
-async function fetchCompany(c: CompanySource): Promise<Posting[]> {
-  if (c.ats === "workday") {
-    const byId = new Map<string, Posting>();
-    let anyOk = false;
-    let lastErr: Error | null = null;
-    for (const term of SEARCH_TERMS) {
-      try {
-        for (const p of await fetchWorkday(c, term)) byId.set(p.id, p);
-        anyOk = true;
-      } catch (e) {
-        // One failing search term must not lose the company's other terms.
-        lastErr = e as Error;
-        console.error(`[fetch] ${c.name} (term "${term}"): ${(e as Error).message}`);
-      }
+/** Run a per-search-term fetcher (Workday/Oracle) over all SEARCH_TERMS, deduping
+ *  by id. One failing term is logged and skipped; only an all-terms-failed run
+ *  hard-throws (so a truly broken tenant surfaces). */
+async function fetchByTerms(
+  c: CompanySource,
+  fetcher: (c: CompanySource, term: string) => Promise<Posting[]>,
+): Promise<Posting[]> {
+  const byId = new Map<string, Posting>();
+  let anyOk = false;
+  let lastErr: Error | null = null;
+  for (const term of SEARCH_TERMS) {
+    try {
+      for (const p of await fetcher(c, term)) byId.set(p.id, p);
+      anyOk = true;
+    } catch (e) {
+      lastErr = e as Error;
+      console.error(`[fetch] ${c.name} (term "${term}"): ${(e as Error).message}`);
     }
-    // Only surface a hard failure if every term failed (tenant likely broken).
-    if (!anyOk && lastErr) throw lastErr;
-    return [...byId.values()];
   }
+  if (!anyOk && lastErr) throw lastErr;
+  return [...byId.values()];
+}
+
+async function fetchCompany(c: CompanySource): Promise<Posting[]> {
+  if (c.ats === "workday") return fetchByTerms(c, fetchWorkday);
+  if (c.ats === "oracle") return fetchByTerms(c, fetchOracle);
   if (c.ats === "greenhouse") return fetchGreenhouse(c);
   if (c.ats === "lever") return fetchLever(c);
   if (c.ats === "icims") return fetchIcims(c);
@@ -96,6 +104,7 @@ async function enrich(p: Posting): Promise<void> {
     let detail: { description: string; locations: string[] } | null = null;
     if (p.description) detail = { description: p.description, locations: [] }; // adapter gave it (Lever)
     else if (p.url.includes("myworkdayjobs.com")) detail = await fetchJobDetail(p.url);
+    else if (p.oracleDetail) detail = await fetchOracleDetail(p.oracleDetail);
     else if (p.detailApi) detail = await fetchGreenhouseDetail(p.detailApi);
     if (!detail) return;
 

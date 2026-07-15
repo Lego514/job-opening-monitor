@@ -1,4 +1,4 @@
-export type Ats = "workday" | "greenhouse" | "lever" | "icims";
+export type Ats = "workday" | "greenhouse" | "lever" | "icims" | "oracle";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -15,6 +15,9 @@ export interface CompanySource {
   leverToken?: string; // company token, e.g. "spotify"
   // iCIMS:
   icimsHost?: string; // e.g. "careers-incyte.icims.com"
+  // Oracle Cloud Candidate Experience (e.g. JPMorgan Chase):
+  oracleHost?: string; // e.g. "jpmc.fa.oraclecloud.com"
+  oracleSite?: string; // CE site number, e.g. "CX_1001"
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;
@@ -38,6 +41,7 @@ export interface Posting {
   salary?: string | null; // salary text parsed from the JD, if any
   remote?: boolean; // JD indicates remote-eligible (passes the location filter)
   detailApi?: string; // adapter-specific detail endpoint (Greenhouse), for enrichment
+  oracleDetail?: string; // Oracle CE detail endpoint, for enrichment
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
   capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
 }

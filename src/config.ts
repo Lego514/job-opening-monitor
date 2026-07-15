@@ -62,6 +62,11 @@ export const COMPANIES: CompanySource[] = [
   { name: "Airtable", ats: "greenhouse", ghToken: "airtable", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // Lever employers (clean public API; description inline).
   { name: "Spotify", ats: "lever", leverToken: "spotify", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // Oracle Cloud Candidate Experience — JPMorgan Chase (Wilmington DE is a major
+  // Chase hub; top referral channel). Two public CE sites host different brands/
+  // req sets, so both are polled; global results are trimmed by the location filter.
+  { name: "JPMorgan Chase", ats: "oracle", oracleHost: "jpmc.fa.oraclecloud.com", oracleSite: "CX_1001", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "JPMorgan Chase", ats: "oracle", oracleHost: "jpmc.fa.oraclecloud.com", oracleSite: "CX_1002", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // iCIMS — NOT supported: Incyte runs a Jibe/iCIMS SPA that loads jobs via client XHR
   // (no server HTML, no RSS, no embedded JSON), so a plain fetch can't read it — it would
   // need a headless browser. Kept as a marker; adapters/icims.ts safely returns nothing.
