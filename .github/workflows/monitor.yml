@@ -30,3 +30,22 @@ jobs:
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
           MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
           WORKDAY_MAX_RESULTS: ${{ vars.WORKDAY_MAX_RESULTS }}
+
+      # The monitor needs monitoring: a crashing cron is otherwise invisible
+      # until you notice the alerts stopped. (This is exactly what happened
+      # 2026-07-01..14 — every run failed on unset secrets, unnoticed.)
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured — skipping failure alert."
+            exit 0
+          fi
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=🚨 Job monitor run FAILED — no alerts this run. ${RUN_URL}" \
+            -o /dev/null

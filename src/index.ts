@@ -14,6 +14,7 @@ import { sendEmail } from "./notify/email";
 import { selectAlertable } from "./select";
 import { postedDays } from "./recency";
 import { isDelaware, h1bWageHint } from "./rank";
+import { checkEnv, missingEnvMessage, type RunMode } from "./env";
 import { type CompanySource, type Posting, postingKey } from "./types";
 
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -180,6 +181,13 @@ function emailHtml(list: Posting[], extra = 0): string {
 }
 
 async function main(): Promise<void> {
+  // Check secrets BEFORE the expensive fetch — a missing one used to surface
+  // only at the first Supabase call, ~3 minutes and every source later.
+  const mode: RunMode = DRY_RUN ? "dry-run" : SEED ? "seed" : "live";
+  const { missing, degraded } = checkEnv(process.env, mode);
+  if (missing.length > 0) throw new Error(missingEnvMessage(missing, mode));
+  for (const d of degraded) console.warn(`[env] ${d}`);
+
   const { all: fetched, failed } = await collectAll();
   // Roles in the DE area get the wider filter; everywhere else stays strict.
   const filtersFor = (p: Posting) => (isDelaware(p.location) ? LOCAL_FILTERS : FILTERS);
