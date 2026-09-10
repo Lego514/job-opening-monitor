@@ -48,7 +48,12 @@ export function classifySponsorship(description: string): SponsorshipResult {
 export function findSalary(text: string): string | null {
   const AMOUNT = String.raw`\$\s?\d[\d,]*(?:\.\d+)?\s?[kK]?`;
   const re = new RegExp(`${AMOUNT}(?:\\s*(?:-|–|—|to)\\s*${AMOUNT})?`, "g");
-  const cands = [...text.matchAll(re)].map((m) => m[0].replace(/\s+/g, " ").trim());
+  // Drop grant/budget figures: university and research JDs routinely describe
+  // the funding behind the role ("a 5-year, $21.5 million initiative"), which
+  // would otherwise win as the largest dollar amount on the page.
+  const cands = [...text.matchAll(re)]
+    .filter((m) => !/^\s*(?:million|billion)\b/i.test(text.slice(m.index + m[0].length)))
+    .map((m) => m[0].replace(/\s+/g, " ").trim());
   if (cands.length === 0) return null;
   const isRange = (s: string) => /(?:-|–|—|\bto\b)/.test(s);
   const score = (s: string) => (isRange(s) ? 1e12 : 0) + (dollarValue(s) ?? 0);

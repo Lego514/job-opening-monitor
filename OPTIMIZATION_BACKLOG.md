@@ -54,5 +54,22 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 ## Remaining / follow-ups
 
 - **JPMorgan Chase** `[x]` — new Oracle Cloud CE adapter (`adapters/oracle.ts`); polls sites CX_1001 + CX_1002 with pagination, enriches via the CE detail endpoint (sponsorship/salary/remote). Verified live: ~644 fetched, Wilmington/Newark DE roles (incl. Payment Lifecycle / Risk Reporting Analyst) surface with salary + sponsorship flags.
-- **B1 leftovers** — session-handshake adapter for the 422 tenants (Sallie Mae / Nemours / UD / Truist); Best Egg ATS (not on Lever/Greenhouse); Discover (401).
+- **Nemours** `[x]` (2026-09-10) — NOT Workday. It runs Oracle Cloud CE (`epyz.fa.us2.oraclecloud.com`,
+  site `CX_1`), so it reused the JPMC adapter: config-only, marked `capExempt`. Verified live.
+- **University of Delaware** `[x]` (2026-09-10) — NOT Workday either. It runs **PageUp**
+  (`careers.udel.edu`, dc4 instance 858) behind an **AWS WAF** challenge: a plain fetch gets HTTP 202 +
+  a JS proof-of-work page, and no header combination passes. New `adapters/pageup.ts` drives headless
+  Chromium (Playwright) — verified live, 170 roles fetched, 6 Newark DE matches, all cap-exempt and
+  ranked top. CI installs chromium in the workflow.
+- **The "session handshake" diagnosis above was wrong.** Those 422s were not a cookie problem — the
+  tenant/site ids were guesses at careers sites that aren't Workday at all. Before adding a source,
+  confirm the real ATS by grepping the employer's careers page for an ATS hostname; don't guess a
+  Workday tenant from the company name. Sallie Mae / Truist are still unverified on that basis.
+- **B1 leftovers** — Sallie Mae / Truist (re-identify the real ATS first); Best Egg ATS (not on
+  Lever/Greenhouse); Discover (401).
+- **Comcast** `[x]` (2026-09-10) — wd5 started returning HTTP 410; the tenant moved to wd115. Source had
+  been silently dead. `npm run check` catches this class of failure — worth running periodically.
+- **findSalary grant figures** `[x]` (2026-09-10) — university/research JDs cite funding ("a 5-year,
+  $21.5 million initiative"), which won as the largest dollar amount and showed up as a salary.
+  Figures followed by million/billion are now dropped.
 - **D1+** — per-source consecutive-failure state table.

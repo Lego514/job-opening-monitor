@@ -73,6 +73,11 @@ export const COMPANIES: CompanySource[] = [
   // careers site is Oracle, not Workday — the earlier "Workday 422" was a wrong
   // tenant guess, not a session/cookie problem.
   { name: "Nemours", ats: "oracle", oracleHost: "epyz.fa.us2.oraclecloud.com", oracleSite: "CX_1", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // PageUp — University of Delaware. Cap-exempt (a university), Newark DE, and
+  // the single highest-value employer on this list for the H-1B lottery problem.
+  // It needs the browser-driven adapter: UD fronts PageUp with an AWS WAF
+  // challenge that answers a plain fetch with a 202 + JS proof-of-work page.
+  { name: "University of Delaware", ats: "pageup", pageupUrl: "https://careers.udel.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
   // iCIMS — NOT supported: Incyte runs a Jibe/iCIMS SPA that loads jobs via client XHR
   // (no server HTML, no RSS, no embedded JSON), so a plain fetch can't read it — it would
   // need a headless browser. Kept as a marker; adapters/icims.ts safely returns nothing.

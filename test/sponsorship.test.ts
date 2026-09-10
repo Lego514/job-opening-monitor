@@ -52,3 +52,23 @@ describe("findSalary", () => {
     expect(findSalary("No compensation details here.")).toBeNull();
   });
 });
+
+describe("findSalary — grant figures", () => {
+  it("ignores grant sizes stated in millions", () => {
+    expect(
+      findSalary("The Institute is a 5-year (2026-2031), $21.5 million research initiative."),
+    ).toBeNull();
+  });
+
+  it("still finds the pay range in a JD that also cites a grant", () => {
+    expect(
+      findSalary("Backed by a $21.5 million award. Salary range: $75,000 - $95,000 annually."),
+    ).toBe("$75,000 - $95,000");
+  });
+});
+
+describe("findSalary — grant figures, boundary", () => {
+  it("keeps a figure whose next word merely starts with m", () => {
+    expect(findSalary("Compensation is $95,000 monthly equivalent.")).toBe("$95,000");
+  });
+});

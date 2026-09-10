@@ -15,6 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The University of Delaware source needs a real browser: UD fronts its
+      # PageUp board with an AWS WAF challenge that a plain fetch can't answer.
+      - run: npx playwright install --with-deps chromium
       - run: npm start
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

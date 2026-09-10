@@ -4,6 +4,7 @@ import { fetchGreenhouse, fetchGreenhouseDetail } from "./adapters/greenhouse";
 import { fetchLever } from "./adapters/lever";
 import { fetchIcims } from "./adapters/icims";
 import { fetchOracle, fetchOracleDetail } from "./adapters/oracle";
+import { fetchPageUp, fetchPageUpDetail, closePageUpBrowser } from "./adapters/pageup";
 import { matches, locationAllowed, locationBlocked } from "./match";
 import { classifySponsorship, findSalary } from "./sponsorship";
 import { detectRemote } from "./remote";
@@ -72,6 +73,7 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "greenhouse") return fetchGreenhouse(c);
   if (c.ats === "lever") return fetchLever(c);
   if (c.ats === "icims") return fetchIcims(c);
+  if (c.ats === "pageup") return fetchPageUp(c);
   return [];
 }
 
@@ -107,6 +109,7 @@ async function enrich(p: Posting): Promise<void> {
     else if (p.url.includes("myworkdayjobs.com")) detail = await fetchJobDetail(p.url);
     else if (p.oracleDetail) detail = await fetchOracleDetail(p.oracleDetail);
     else if (p.detailApi) detail = await fetchGreenhouseDetail(p.detailApi);
+    else if (p.pageupDetail) detail = await fetchPageUpDetail(p.pageupDetail);
     if (!detail) return;
 
     const { description, locations } = detail;
@@ -265,7 +268,12 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// The PageUp adapter's headless Chromium keeps the event loop alive, so it has
+// to be torn down on every exit path — including the error one, or a failing run
+// would hang until the workflow's timeout instead of failing fast.
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  })
+  .finally(closePageUpBrowser);

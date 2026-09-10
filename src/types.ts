@@ -1,4 +1,4 @@
-export type Ats = "workday" | "greenhouse" | "lever" | "icims" | "oracle";
+export type Ats = "workday" | "greenhouse" | "lever" | "icims" | "oracle" | "pageup";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -18,6 +18,8 @@ export interface CompanySource {
   // Oracle Cloud Candidate Experience (e.g. JPMorgan Chase):
   oracleHost?: string; // e.g. "jpmc.fa.oraclecloud.com"
   oracleSite?: string; // CE site number, e.g. "CX_1001"
+  // PageUp (e.g. University of Delaware) — full listing URL; needs a browser:
+  pageupUrl?: string; // e.g. "https://careers.udel.edu/en-us/listing/"
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;
@@ -42,6 +44,7 @@ export interface Posting {
   remote?: boolean; // JD indicates remote-eligible (passes the location filter)
   detailApi?: string; // adapter-specific detail endpoint (Greenhouse), for enrichment
   oracleDetail?: string; // Oracle CE detail endpoint, for enrichment
+  pageupDetail?: string; // PageUp job page URL, for enrichment (browser fetch)
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
   capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
 }

@@ -11,7 +11,8 @@ being among the first applicants matters when you're job hunting on an OPT clock
 
 ```
 config (companies + filters)
-   → adapters (Workday CXS, paginated)      extract
+   → adapters (Workday/Greenhouse/Lever/    extract
+     Oracle CE APIs + PageUp via browser)
    → match (keywords + location)            filter
    → JD scan (sponsorship + salary)         enrich
    → diff vs. seen (Supabase)               dedup
@@ -28,8 +29,19 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **~52 companies across 3 ATS platforms** — each returns its complete list every run, so dedup catches
+  **~57 companies across 5 ATS platforms** — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
+- **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites) and Nemours Children's
+  Health. Nemours is **cap-exempt**, so its roles skip the H-1B lottery and rank top.
+- **PageUp adapter** (University of Delaware) — the one source that needs a real browser. PageUp serves
+  plain server-rendered HTML, but UD fronts it with an AWS WAF challenge that answers a plain `fetch`
+  with HTTP 202 and a JavaScript proof-of-work page; no header combination gets past it. So this adapter
+  drives headless Chromium via Playwright, which CI installs with
+  `npx playwright install --with-deps chromium`. UD is a university and therefore **cap-exempt** — the
+  highest-value source here for the lottery problem. Parsing is a pure function
+  ([`normalizePageUp`](src/adapters/pageup.ts)), so it is unit-tested without a browser.
+  Note UD publishes no posting date (only a closing date), so its roles carry no age and bypass the
+  recency filter — the `seen` state still guarantees one alert each.
 - **Remote-eligibility detection** — scans the JD for role-level remote phrasing, so a role tagged to an
   HQ city but actually remote still surfaces; foreign regions ("Remote, India", UK, …) are blocked.
 - **Role focus** — tuned for an MS-CS new grad on STEM OPT: software/data engineering and ML first, with
