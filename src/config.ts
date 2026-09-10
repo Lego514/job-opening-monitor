@@ -61,6 +61,24 @@ export const COMPANIES: CompanySource[] = [
   { name: "Carta", ats: "greenhouse", ghToken: "carta", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Checkr", ats: "greenhouse", ghToken: "checkr", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Airtable", ats: "greenhouse", ghToken: "airtable", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // NYC-metro employers (second-choice location). Every token below was probed
+  // against the live board before being added — see the backlog's note on not
+  // guessing ATS ids. Counts are NYC-metro roles at the time of adding.
+  { name: "Point72", ats: "greenhouse", ghToken: "point72", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "MongoDB", ats: "greenhouse", ghToken: "mongodb", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Justworks", ats: "greenhouse", ghToken: "justworks", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Zocdoc", ats: "greenhouse", ghToken: "zocdoc", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Peloton", ats: "greenhouse", ghToken: "peloton", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Jump Trading", ats: "greenhouse", ghToken: "jumptrading", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Betterment", ats: "greenhouse", ghToken: "betterment", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Alloy", ats: "greenhouse", ghToken: "alloy", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "BetterHelp", ats: "greenhouse", ghToken: "betterhelp", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Squarespace", ats: "greenhouse", ghToken: "squarespace", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "IMC Trading", ats: "greenhouse", ghToken: "imc", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Cockroach Labs", ats: "greenhouse", ghToken: "cockroachlabs", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Yext", ats: "greenhouse", ghToken: "yext", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Attentive", ats: "greenhouse", ghToken: "attentive", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Klaviyo", ats: "greenhouse", ghToken: "klaviyo", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // Lever employers (clean public API; description inline).
   { name: "Spotify", ats: "lever", leverToken: "spotify", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // Oracle Cloud Candidate Experience — JPMorgan Chase (Wilmington DE is a major
@@ -73,6 +91,9 @@ export const COMPANIES: CompanySource[] = [
   // careers site is Oracle, not Workday — the earlier "Workday 422" was a wrong
   // tenant guess, not a session/cookie problem.
   { name: "Nemours", ats: "oracle", oracleHost: "epyz.fa.us2.oraclecloud.com", oracleSite: "CX_1", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // NYC-metro banks on Oracle CE (same adapter as JPMC).
+  { name: "American Express", ats: "oracle", oracleHost: "egug.fa.us2.oraclecloud.com", oracleSite: "CX_1", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "BNY", ats: "oracle", oracleHost: "eofe.fa.us2.oraclecloud.com", oracleSite: "bny-careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // PageUp — University of Delaware. Cap-exempt (a university), Newark DE, and
   // the single highest-value employer on this list for the H-1B lottery problem.
   // It needs the browser-driven adapter: UD fronts PageUp with an AWS WAF

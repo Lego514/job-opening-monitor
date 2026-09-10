@@ -29,7 +29,7 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **~57 companies across 5 ATS platforms** — each returns its complete list every run, so dedup catches
+  **~74 companies across 5 ATS platforms** — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
 - **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites) and Nemours Children's
   Health. Nemours is **cap-exempt**, so its roles skip the H-1B lottery and rank top.
@@ -42,6 +42,13 @@ config (companies + filters)
   ([`normalizePageUp`](src/adapters/pageup.ts)), so it is unit-tested without a browser.
   Note UD publishes no posting date (only a closing date), so its roles carry no age and bypass the
   recency filter — the `seen` state still guarantees one alert each.
+- **Location tiers** — alerts are ordered DE-local > cap-exempt > NYC metro > higher wage > fresher.
+  Delaware is the top choice and gets a wider role filter (`LOCAL_FILTERS`, senior titles included); NYC
+  is the second-choice metro and keeps the strict entry-level filter, so adding it widened the net
+  without flooding the alerts. Cap-exempt deliberately outranks the NYC preference — skipping the H-1B
+  lottery beats a preferred city. NYC-metro sources: Point72, MongoDB, Justworks, Zocdoc, Peloton, Jump
+  Trading, Betterment, Alloy, BetterHelp, Squarespace, IMC, Cockroach Labs, Yext, Attentive, Klaviyo
+  (Greenhouse) plus American Express and BNY (Oracle CE).
 - **Remote-eligibility detection** — scans the JD for role-level remote phrasing, so a role tagged to an
   HQ city but actually remote still surfaces; foreign regions ("Remote, India", UK, …) are blocked.
 - **Role focus** — tuned for an MS-CS new grad on STEM OPT: software/data engineering and ML first, with

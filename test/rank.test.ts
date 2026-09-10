@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dollarValue, salaryFloor, isDelaware, h1bWageHint } from "../src/rank";
+import { dollarValue, salaryFloor, isDelaware, isNycMetro, h1bWageHint } from "../src/rank";
 
 describe("dollarValue / salaryFloor", () => {
   it("parses plain, comma'd, and K-suffixed amounts", () => {
@@ -41,5 +41,38 @@ describe("isDelaware", () => {
   });
   it("keeps a DE role even when a second location names another state", () => {
     expect(isDelaware("Wilmington, DE · Jersey City, NJ")).toBe(true);
+  });
+});
+
+describe("isNycMetro", () => {
+  it("matches the city and its boroughs", () => {
+    for (const loc of ["New York, NY", "NYC", "Brooklyn, NY", "Manhattan", "Long Island City, NY"]) {
+      expect(isNycMetro(loc)).toBe(true);
+    }
+  });
+
+  it("matches the NJ/CT commuter ring", () => {
+    for (const loc of ["Jersey City, NJ", "Hoboken, NJ", "Stamford, CT", "Newark, NJ"]) {
+      expect(isNycMetro(loc)).toBe(true);
+    }
+  });
+
+  // "New York" is a state as well as a city; upstate is not a NYC commute.
+  it("rejects upstate New York", () => {
+    for (const loc of ["Buffalo, NY", "Rochester, NY", "Albany, NY"]) {
+      expect(isNycMetro(loc)).toBe(false);
+    }
+  });
+
+  it("rejects unrelated locations", () => {
+    for (const loc of ["Wilmington, DE", "Philadelphia, PA", "Remote, India", ""]) {
+      expect(isNycMetro(loc)).toBe(false);
+    }
+  });
+
+  // Newark is Delaware's ring city too — the two must not both claim it.
+  it("keeps Newark DE and Newark NJ apart", () => {
+    expect(isNycMetro("Newark, DE")).toBe(false);
+    expect(isDelaware("Newark, NJ")).toBe(false);
   });
 });

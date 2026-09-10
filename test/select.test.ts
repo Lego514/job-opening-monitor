@@ -48,3 +48,38 @@ describe("selectAlertable", () => {
     expect(out.map((p) => p.id)).toEqual(["de-old", "cap-old", "wage-old", "remote-fresh", "flagged-de"]);
   });
 });
+
+describe("selectAlertable — location tiers", () => {
+  const at = (id: string, location: string, capExempt = false): Posting => ({
+    id,
+    company: "C",
+    title: id,
+    location,
+    url: "u",
+    postedOn: "Posted Today",
+    sponsorship: "unknown",
+    capExempt,
+  });
+
+  it("orders DE-local, then cap-exempt, then NYC metro, then the rest", () => {
+    const out = selectAlertable(
+      [
+        at("elsewhere", "Austin, TX"),
+        at("nyc", "New York, NY"),
+        at("capexempt", "Boston, MA", true),
+        at("delaware", "Wilmington, DE"),
+      ],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["delaware", "capexempt", "nyc", "elsewhere"]);
+  });
+
+  // Skipping the H-1B lottery outranks the second-choice city.
+  it("puts a cap-exempt role above a NYC one", () => {
+    const out = selectAlertable(
+      [at("nyc", "Brooklyn, NY"), at("capexempt", "Newark, DE", true)],
+      { skipNoSponsorship: false },
+    );
+    expect(out[0].id).toBe("capexempt");
+  });
+});

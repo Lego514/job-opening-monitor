@@ -23,6 +23,28 @@ export function isDelaware(loc: string | null | undefined): boolean {
 }
 
 /**
+ * NYC commutable metro — the second-choice location, so these rank above the
+ * rest of the country but below Delaware and below cap-exempt employers (the
+ * lottery matters more than the city).
+ *
+ * "New York" alone would drag in the whole state, so upstate metros are
+ * excluded: Buffalo and Newark NJ are both "NY-ish" strings that mean very
+ * different commutes. The NJ/CT ring cities are listed only where the name is
+ * unambiguous (Hoboken) or the state is spelled out (Newark, NJ) — plain
+ * "Newark" is Delaware's ring city and is already claimed by isDelaware.
+ */
+const NYC_SIGNAL =
+  /\b(?:new york city|nyc|manhattan|brooklyn|the bronx|long island city)\b|,\s*ny\b|\bnew york\b/i;
+const NYC_RING = /\b(?:jersey city|hoboken|stamford|white plains|yonkers|greenwich)\b|\bnewark\s*,\s*(?:nj|new jersey)\b/i;
+const UPSTATE = /\b(?:buffalo|rochester|syracuse|albany|ithaca|binghamton|utica)\b/i;
+
+export function isNycMetro(loc: string | null | undefined): boolean {
+  const s = loc ?? "";
+  if (UPSTATE.test(s)) return false;
+  return NYC_SIGNAL.test(s) || NYC_RING.test(s);
+}
+
+/**
  * Numeric value of the first dollar amount in a string, expanding a `K` suffix
  * (e.g. "$95,000" -> 95000, "$95K" -> 95000, "$95k–$120k" -> 95000).
  */
