@@ -13,7 +13,8 @@ export const COMPANIES: CompanySource[] = [
   { name: "Barclays", ats: "workday", tenant: "barclays", wd: "wd3", site: "external_career_site_barclays", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Citi", ats: "workday", tenant: "citi", wd: "wd5", site: "2", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Vanguard", ats: "workday", tenant: "vanguard", wd: "wd5", site: "vanguard_external", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
-  { name: "Comcast", ats: "workday", tenant: "comcast", wd: "wd5", site: "Comcast_Careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // wd5 started returning 410 (tenant moved datacenters) — now wd115.
+  { name: "Comcast", ats: "workday", tenant: "comcast", wd: "wd115", site: "Comcast_Careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Corteva", ats: "workday", tenant: "corteva", wd: "wd5", site: "Corteva", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
   // More Delaware-local employers (Wilmington / Newark HQ) — incl. smaller ones.
   { name: "Solenis", ats: "workday", tenant: "solenis", wd: "wd1", site: "Solenis", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
@@ -67,6 +68,11 @@ export const COMPANIES: CompanySource[] = [
   // req sets, so both are polled; global results are trimmed by the location filter.
   { name: "JPMorgan Chase", ats: "oracle", oracleHost: "jpmc.fa.oraclecloud.com", oracleSite: "CX_1001", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "JPMorgan Chase", ats: "oracle", oracleHost: "jpmc.fa.oraclecloud.com", oracleSite: "CX_1002", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // Nemours Children's Health — cap-exempt nonprofit with a Wilmington DE hospital
+  // (duPont). Also Oracle CE, so it reuses the JPMC adapter: no new code. NOTE the
+  // careers site is Oracle, not Workday — the earlier "Workday 422" was a wrong
+  // tenant guess, not a session/cookie problem.
+  { name: "Nemours", ats: "oracle", oracleHost: "epyz.fa.us2.oraclecloud.com", oracleSite: "CX_1", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
   // iCIMS — NOT supported: Incyte runs a Jibe/iCIMS SPA that loads jobs via client XHR
   // (no server HTML, no RSS, no embedded JSON), so a plain fetch can't read it — it would
   // need a headless browser. Kept as a marker; adapters/icims.ts safely returns nothing.
