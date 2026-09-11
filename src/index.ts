@@ -243,15 +243,20 @@ function emailHtml(list: Posting[], extra = 0): string {
  * it is the normal local configuration. `useCache` is off for a dry run, which
  * has no Supabase credentials at all.
  */
-async function classifyStage(posts: Posting[], max: number, useCache: boolean): Promise<void> {
-  if (!llmEnabled() || posts.length === 0) return;
+async function classifyStage(
+  posts: Posting[],
+  max: number,
+  useCache: boolean,
+): Promise<Set<string>> {
+  if (!llmEnabled() || posts.length === 0) return new Set();
   const cache = useCache ? await loadLlmVerdicts(posts.map(postingKey)) : undefined;
   const r = await classifyAll(posts, { cache, max });
   if (useCache) await saveLlmVerdicts(r.fresh, LLM_MODEL);
   console.log(
     `[llm] classified ${r.classified} postings, ~$${r.costUsd.toFixed(4)} ` +
-      `(${r.cached} from cache, ${r.failed} failed) — ${LLM_MODEL}`,
+      `(${r.cached} from cache, ${r.failed} failed, ${r.deferred.size} deferred) — ${LLM_MODEL}`,
   );
+  return r.deferred;
 }
 
 async function main(): Promise<void> {
@@ -316,17 +321,30 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Classify only what's genuinely new — never the ~280 that match every run.
-  // Cached verdicts make a re-run or a reappearing role free.
-  await classifyStage(fresh, LLM_MAX_PER_RUN, true);
+  // Classify only what's genuinely new — never the ~2000 that match every run.
+  // Cached verdicts make a re-run or a reappearing role free. Rank order first,
+  // so if the ceiling bites it bites the least promising roles.
+  const deferred = await classifyStage(
+    selectAlertable(fresh, { ...opts, skipLlmReject: false }),
+    LLM_MAX_PER_RUN,
+    true,
+  );
+  // A deferred posting was never looked at. Alerting on it unscreened AND
+  // marking it seen would burn it permanently, so hold it back entirely: it
+  // comes round again next run (in ~15 min) with budget to spare.
+  const considered = deferred.size ? fresh.filter((p) => !deferred.has(postingKey(p))) : fresh;
 
-  const alertable = selectAlertable(fresh, opts);
-  console.log(`[diff] ${fresh.length} new; ${alertable.length} to alert.`);
+  const alertable = selectAlertable(considered, opts);
+  console.log(
+    `[diff] ${fresh.length} new; ${alertable.length} to alert` +
+      (deferred.size ? `; ${deferred.size} held for the next run` : "") + ".",
+  );
 
-  // Record ALL fresh (including aged-out / skipped) BEFORE alerting: if a
-  // downstream alert fails we'd rather miss one than re-blast the whole batch
-  // next run (which is exactly what happened when markSeen ran last).
-  await markSeen(fresh);
+  // Record everything we considered (including aged-out / skipped) BEFORE
+  // alerting: if a downstream alert fails we'd rather miss one than re-blast
+  // the whole batch next run (which is exactly what happened when markSeen ran
+  // last). Deferred postings are deliberately NOT recorded.
+  await markSeen(considered);
 
   if (alertable.length > 0) {
     const shown = alertable.slice(0, MAX_ALERTS_PER_RUN);
@@ -343,7 +361,7 @@ async function main(): Promise<void> {
     await sendTelegram(`⚠️ ${failed.length} sources failed to fetch this run: ${failed.join(", ")}`);
   }
   console.log(
-    `[done] alerted ${Math.min(alertable.length, MAX_ALERTS_PER_RUN)}/${alertable.length}, recorded ${fresh.length} new` +
+    `[done] alerted ${Math.min(alertable.length, MAX_ALERTS_PER_RUN)}/${alertable.length}, recorded ${considered.length} new` +
       (failed.length ? `, ${failed.length} sources failed` : "") + ".",
   );
 }

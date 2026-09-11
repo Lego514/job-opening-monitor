@@ -195,6 +195,12 @@ export interface ClassifyResult {
   failed: number; // postings the API could not classify (left to the regex path)
   costUsd: number; // estimated spend for this run
   fresh: Map<string, LlmVerdict>; // API verdicts, for the caller to persist
+  /**
+   * Keys the per-run ceiling pushed past — NOT attempted, as opposed to
+   * attempted and failed. The caller should leave these out of `seen` so they
+   * come back next run rather than being alerted unscreened and then forgotten.
+   */
+  deferred: Set<string>;
 }
 
 export interface ClassifyOpts {
@@ -256,10 +262,13 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
     }
   }
 
-  // Newest first, so when the ceiling bites it drops the stalest roles.
+  // The caller passes these in rank order, so the ceiling drops the least
+  // promising roles — and they are deferred, not discarded.
   const batch = todo.slice(0, Math.max(0, opts.max));
-  const skipped = todo.length - batch.length;
-  if (skipped > 0) console.warn(`[llm] ceiling reached — ${skipped} posting(s) left unclassified.`);
+  const deferred = new Set(todo.slice(batch.length).map(postingKey));
+  if (deferred.size > 0) {
+    console.warn(`[llm] ceiling reached — ${deferred.size} posting(s) deferred to the next run.`);
+  }
 
   if (batch.length > 0) {
     // The SDK's own retry covers 429/529/5xx and connection errors; the timeout
@@ -297,5 +306,6 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
     failed,
     costUsd: inTokens * PRICE_IN + outTokens * PRICE_OUT,
     fresh,
+    deferred,
   };
 }

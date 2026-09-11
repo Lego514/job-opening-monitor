@@ -151,13 +151,15 @@ describe("classifyAll", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("honours the per-run ceiling", async () => {
+  it("honours the per-run ceiling and defers, rather than discards, the overflow", async () => {
     const { client } = fakeClient(() => VERDICT);
     const posts = [mk({ id: "a" }), mk({ id: "b" }), mk({ id: "c" })];
     const r = await classifyAll(posts, { max: 2, client });
 
     expect(r.classified).toBe(2);
     expect(posts.filter((p) => p.llm).length).toBe(2);
+    // Deferred keys must be held back from `seen` so they come round again.
+    expect([...r.deferred]).toEqual(["Acme:c"]);
   });
 
   it("survives an API outage — the postings just keep the regex verdict", async () => {
@@ -170,6 +172,8 @@ describe("classifyAll", () => {
     expect(r.failed).toBe(2);
     expect(r.classified).toBe(0);
     expect(posts.every((p) => p.llm === undefined)).toBe(true);
+    // An outage is not a ceiling: these were attempted, so they are not held back.
+    expect(r.deferred.size).toBe(0);
   });
 
   it("counts an unusable response as a failure, not a verdict", async () => {
@@ -184,6 +188,7 @@ describe("classifyAll", () => {
   it("does nothing (and costs nothing) for an empty batch", async () => {
     const r = await classifyAll([], { max: 10 });
     expect(r).toMatchObject({ classified: 0, cached: 0, failed: 0, costUsd: 0 });
+    expect(r.deferred.size).toBe(0);
   });
 });
 

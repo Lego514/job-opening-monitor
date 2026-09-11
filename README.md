@@ -162,6 +162,9 @@ than to pay a model to reject). [`src/llm.ts`](src/llm.ts) then sends title + lo
 | `remoteUS` | boolean |
 | `summary` | ≤20 words, shown in the alert |
 
+On a live dry-run comparison the pre-filter went from **297** matches to **2004** (of ~15k fetched) —
+that is the size of the blind spot, and the LLM is what makes the extra 1700 safe to look at.
+
 Roles the model marks `newGradFit: no` or `seniority` ≥ mid are dropped from alerts; the rest carry the
 verdict into the Telegram/email meta line, and a `no-sponsorship` verdict sets the same `⛔` flag the
 regex classifier sets. The LLM can only ever *add* a sponsorship flag — a regex-flagged role stays
@@ -178,7 +181,9 @@ Four things keep this well under **$1/day**:
   seeds, and roles that drop off a board and return are free.
 - **The JD is truncated** to ~4k characters — seniority and sponsorship language lives near the top.
 - **Hard ceilings**: `LLM_MAX_PER_RUN` (default 80) and `LLM_DRY_RUN_MAX` (default 15, since a dry run
-  has no cache to amortize against).
+  has no cache to amortize against). Postings past the ceiling are *deferred*, not dropped — they are
+  held out of `seen` and come round again on the next run (~15 min), so a backlog drains over a few runs
+  instead of being alerted unscreened and then forgotten.
 
 At Haiku 4.5 rates ($1/MTok in, $5/MTok out) and ~1.2k in / ~120 out tokens per role, that is about
 **$0.0018 per role**. Every run prints its own spend: `[llm] classified N postings, ~$X …`.

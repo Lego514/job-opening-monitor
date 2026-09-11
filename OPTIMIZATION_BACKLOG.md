@@ -76,15 +76,24 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 - **F5** `[x]` **Graceful degradation.** No `ANTHROPIC_API_KEY` (the normal local case) → `checkEnv`
   reports it as degraded and the run takes the regex path unchanged. An API failure is caught per
   posting; a role with no verdict is never dropped, only never promoted.
+- **F4b** `[x]` Postings past `LLM_MAX_PER_RUN` are DEFERRED, not consumed: they are held out of
+  `markSeen` so the next run (15 min later) classifies them. Without this the first run after widening
+  would have marked ~1900 backlog roles seen while screening only 80 — alerting the rest unscreened and
+  then never looking at them again.
 - **F6** — *follow-up:* the verdict cache has no TTL or model-version invalidation. The `model` column is
   recorded, but changing `LLM_MODEL` won't re-classify cached roles. Add a cache sweep if the prompt or
   model changes materially.
 - **F7** — *follow-up:* no prompt caching. Haiku 4.5's minimum cacheable prefix (2048 tokens) is larger
   than the system prompt, so a `cache_control` breakpoint would be a no-op today. Revisit if the system
   prompt grows.
-- **F8** — *follow-up:* the widened pre-filter raises the number of enriched postings (more JD detail
-  fetches per run, which is wall-clock, not dollars). If runs get slow, tighten the discipline excludes
-  rather than re-adding seniority ones.
+- **F8** — *follow-up:* the widened pre-filter raises the number of enriched postings —
+  measured 297 → 2004 matches per run, so ~7x the JD detail fetches. That is wall-clock, not dollars
+  (a dry run still finishes well inside the 15-min cron). If runs get slow, tighten the discipline
+  excludes rather than re-adding seniority ones.
+- **F9** — *follow-up:* `LLM_MAX_PER_RUN` is per-run, not per-day. At 96 runs/day the theoretical worst
+  case is far over budget; in practice it can't be reached (it needs 80 genuinely new postings every 15
+  minutes) and steady-state is ~140 new/day ≈ $0.26. A real daily cap would need a spend-tracking table.
+
 
 ## Remaining / follow-ups
 
