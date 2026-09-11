@@ -6,7 +6,8 @@ export type Ats =
   | "oracle"
   | "pageup"
   | "ashby"
-  | "smartrecruiters";
+  | "smartrecruiters"
+  | "peopleadmin";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -17,6 +18,13 @@ export interface CompanySource {
   tenant?: string; // e.g. "astrazeneca"
   wd?: string; // datacenter, e.g. "wd3"
   site?: string; // career site id, e.g. "Careers"
+  // Workday host override. Most tenants live at `{tenant}.{wd}.myworkdayjobs.com`,
+  // but some (universities especially) are hosted on the shared
+  // `wd1.myworkdaysite.com` instead, where the PUBLIC page lives under
+  // `/recruiting/{tenant}/{site}` rather than `/{site}`. The CXS API path
+  // (`/wday/cxs/{tenant}/{site}`) is identical on both, so only the public URL
+  // shape changes. Set this to e.g. "wd1.myworkdaysite.com" (UPenn).
+  wdHost?: string;
   // Greenhouse:
   ghToken?: string; // board token, e.g. "gitlab"
   // Lever:
@@ -32,6 +40,11 @@ export interface CompanySource {
   ashbyToken?: string; // job board name, e.g. "ramp"
   // SmartRecruiters:
   srCompany?: string; // company identifier, e.g. "Experian"
+  // PeopleAdmin (higher-ed ATS) — the host serving `/postings/search.atom`:
+  paHost?: string; // e.g. "jobs.rutgers.edu"
+  // Fallback location for PeopleAdmin feeds that omit pa:city/pa:state
+  // (Villanova, DTCC, Fordham, Hofstra all do) — the campus city.
+  paLocation?: string; // e.g. "Dover, DE"
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;

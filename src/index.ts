@@ -6,6 +6,7 @@ import { fetchIcims } from "./adapters/icims";
 import { fetchOracle, fetchOracleDetail } from "./adapters/oracle";
 import { fetchPageUp, fetchPageUpDetail, closePageUpBrowser } from "./adapters/pageup";
 import { fetchAshby } from "./adapters/ashby";
+import { fetchPeopleAdmin } from "./adapters/peopleadmin";
 import {
   fetchSmartRecruiters,
   fetchSmartRecruitersDetail,
@@ -81,6 +82,7 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "pageup") return fetchPageUp(c);
   if (c.ats === "ashby") return fetchAshby(c);
   if (c.ats === "smartrecruiters") return fetchSmartRecruiters(c);
+  if (c.ats === "peopleadmin") return fetchPeopleAdmin(c);
   return [];
 }
 
@@ -113,7 +115,10 @@ async function enrich(p: Posting): Promise<void> {
   try {
     let detail: { description: string; locations: string[] } | null = null;
     if (p.description) detail = { description: p.description, locations: [] }; // adapter gave it (Lever)
-    else if (p.url.includes("myworkdayjobs.com")) detail = await fetchJobDetail(p.url);
+    // Both Workday host shapes: dedicated myworkdayjobs, and the shared
+    // myworkdaysite the university tenants (UPenn) sit on.
+    else if (p.url.includes("myworkdayjobs.com") || p.url.includes("myworkdaysite.com"))
+      detail = await fetchJobDetail(p.url);
     else if (p.oracleDetail) detail = await fetchOracleDetail(p.oracleDetail);
     else if (p.detailApi) detail = await fetchGreenhouseDetail(p.detailApi);
     else if (p.pageupDetail) detail = await fetchPageUpDetail(p.pageupDetail);

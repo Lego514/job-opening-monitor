@@ -1,6 +1,7 @@
 // Health-check every configured source's endpoint. Run with `npm run check`.
 // Useful for catching a Workday tenant whose site id changed (e.g. a 422).
 import { COMPANIES } from "../src/config";
+import { workdayHost } from "../src/adapters/workday";
 
 const UA = "Mozilla/5.0 (compatible; job-opening-monitor)";
 let bad = 0;
@@ -10,7 +11,7 @@ for (const c of COMPANIES) {
     console.log(`-  ${c.name}: ${c.ats} (not health-checked)`);
     continue;
   }
-  const url = `https://${c.tenant}.${c.wd}.myworkdayjobs.com/wday/cxs/${c.tenant}/${c.site}/jobs`;
+  const url = `https://${workdayHost(c)}/wday/cxs/${c.tenant}/${c.site}/jobs`;
   try {
     const r = await fetch(url, {
       method: "POST",

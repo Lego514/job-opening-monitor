@@ -5,7 +5,7 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 ## Priority order (agreed)
 
 1. **A1** — ISO-date recency parsing (Greenhouse/Lever roles currently bypass the 14-day filter) `[x]`
-2. **B1** — Add missing strategy-critical sources (banks + cap-exempt employers) `[~]` (Barclays + Citi added; ChristianaCare marked cap-exempt)
+2. **B1** — Add missing strategy-critical sources (banks + cap-exempt employers) `[x]` (banks added 2026-07-14; cap-exempt expanded 3 → 21 on 2026-09-11 — see "Cap-exempt expansion" below)
 3. **A2** — Paginate the `seen` load (PostgREST caps at 1000 rows → duplicate alerts once the table grows) `[x]`
 4. **B2 + B3** — cap-exempt flag + Delaware-first alert ordering `[x]`
 5. **A3** — Raise Workday per-term result cap (newest bank roles fall past the first 100) `[x]`
@@ -85,3 +85,98 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   $21.5 million initiative"), which won as the largest dollar amount and showed up as a salary.
   Figures followed by million/billion are now dropped.
 - **D1+** — per-source consecutive-failure state table.
+
+---
+
+## Cap-exempt expansion (2026-09-11)
+
+Cap-exempt employers are the highest-value source type for this candidate — their H-1B petitions skip
+the lottery, which is the real deadline. This pass took the count from **3 → 21**. Method, per the rule
+above: fetch the employer's own careers page, grep it for an ATS hostname, then probe the real API for
+HTTP 200 **with job data** before writing a config line. Nothing was guessed.
+
+### Added — 18 sources, all `capExempt: true` (fetch counts from the 2026-09-11 dry run)
+
+| Employer | ATS | fetched |
+|---|---|---|
+| Jefferson Health | Workday `jeffersonhealth/wd5/ThomasJeffersonExternal` | 299 |
+| Children's Hospital of Philadelphia | Workday `chop/wd108/CHOPExternalCareers` | 51 |
+| Memorial Sloan Kettering | Workday `msk/wd108/MSKCC_Careers_Primary` | 31 |
+| Montefiore | Workday `montefiore/wd12/MMC` | 49 |
+| Cornell University | Workday `cornell/wd1/CornellCareerPage` | 36 |
+| Simons Foundation (Flatiron Institute) | Workday `simonsfoundation/wd1/simonsfoundationcareers` | 7 |
+| University of Pennsylvania | Workday on `wd1.myworkdaysite.com` (`upenn/careers-at-penn`) | 54 |
+| Northwell Health | Oracle CE `eppr.fa.us2.oraclecloud.com` / `CX_2` | 26 |
+| Mount Sinai | Oracle CE `ejis.fa.us6.oraclecloud.com` / `CX` | 110 |
+| Drexel University | PageUp `careers.drexel.edu` | 90 |
+| Rowan University | PageUp `jobs.rowan.edu` | 260 |
+| Seton Hall University | PageUp `jobs.shu.edu` | 384 |
+| Swarthmore College | PageUp `careers.swarthmore.edu` | 18 |
+| Rutgers University | PeopleAdmin `jobs.rutgers.edu` | 886 |
+| Villanova University | PeopleAdmin `jobs.villanova.edu` | 345 |
+| Delaware Technical Community College | PeopleAdmin `dtcc.peopleadmin.com` | 160 |
+| Fordham University | PeopleAdmin `careers.fordham.edu` | 64 |
+| Hofstra University | PeopleAdmin `hofstra.peopleadmin.com` | 78 |
+
+Code changes (both small, both unit-tested):
+
+- **`wdHost` on `CompanySource`** — UPenn *is* Workday, but on the **shared** `wd1.myworkdaysite.com`
+  host, where the public URL is `/recruiting/{tenant}/{site}/job/…` instead of `/{site}/job/…`. The CXS
+  API path (`/wday/cxs/{tenant}/{site}`) is byte-identical on both, so no new adapter was needed: the
+  adapter derives host + public prefix via `workdayHost()` / `workdayPublicPrefix()`, and the detail-URL
+  derivation is now a pure `workdayDetailUrl()` that handles both path shapes (and a leading `/en-US`
+  locale segment). `check-sources.ts` uses the same helper.
+- **`adapters/peopleadmin.ts`** — new, ~70 lines. PeopleAdmin's public `/postings/search.atom` returns
+  the whole board with an ISO `<published>` date and the full JD in `<content>`, so no detail fetch and
+  no pagination. `paLocation` supplies a campus city for the instances that omit `pa:city`/`pa:state`
+  (only Rutgers publishes them).
+
+Verified before committing: `npm test` (100 tests / 17 files), `npm run typecheck`, `npm run check`
+(all Workday sources 200, including the 7 new ones), and a full `npm run dry-run` — every new source
+logged `[fetch] <name>: N` with N>0, zero `FAILED`, `[match] 300 matched of 17928 fetched`, and 36 roles
+tagged "✅ cap-exempt" (Jefferson 23, UD 6, Rutgers 2, ChristianaCare 2, Villanova / Nemours / Mount
+Sinai 1 each). No clinical noise leaked through: `LOCAL_FILTERS`' rn/nurse/physician excludes plus the
+strict title-keyword `FILTERS` handled the hospital boards as-is, so no filter tuning was needed.
+
+### Investigated and NOT added — the exact dead end for each (don't repeat these)
+
+- **Columbia University** — is PageUp underneath (`secure.dc4.pageuppeople.com/apply/884`), but
+  `opportunities.columbia.edu` is a **custom SPA skin**, not the standard PageUp listing:
+  `/en-us/listing/` 404s, and `/jobs/search` returns 339 KB of HTML with **zero** job links, zero
+  `<script src=>`, and no occurrence of any job title — content is injected client-side from an
+  unidentified endpoint. Confirmed dead under Playwright too (0 `a.job-link`). Would need that SPA's own
+  XHR reverse-engineered. High value (NYC, cap-exempt) — worth a second look.
+- **NewYork-Presbyterian**, **Temple Health / Fox Chase**, and CHOP's *front end* — **Phenom People**
+  (`cdn.phenompeople.com`). No adapter exists. CHOP was still added because its Phenom site is backed by
+  a real Workday tenant (`chop.wd108`); no such backing was found for NYP or Temple Health.
+- **Weill Cornell Medicine** — SAP **SuccessFactors** (`career4.successfactors.com`, company
+  `C0000274692P`). No adapter.
+- **Stony Brook University** — **Taleo** (`stonybrooku.taleo.net`). No adapter.
+- **Wilmington University** — **Taleo** (`phh.tbe.taleo.net/phh02/ats/careers/v2/…?org=WILMU`). No adapter.
+- **NYU Langone Health** — **SilkRoad OpenHire** (`nyulangone-openhire.silkroad.com`, company 16370).
+  No adapter.
+- **NYU** (university), **Rockefeller University**, **Hackensack Meridian** — **iCIMS**, already
+  documented here as unsupported (JS-rendered SPA, no server HTML and no feed).
+- **Penn Medicine (UPHS)** — `careers.pennmedicine.org` answers every plain fetch with **HTTP 403**
+  (bot-protection interstitial), so its ATS could not even be identified. Penn's *university* tenant
+  (added above) does not carry UPHS hospital reqs.
+- **Princeton University**, **Penn State**, **Johns Hopkins** — careers pages return **403** (Cloudflare
+  "Just a moment…"); ATS unidentified. Princeton also has `main-princeton.icims.com` — iCIMS, so
+  unsupported either way.
+- **Temple University** (the university, not the health system) — `careers.temple.edu` serves 65 KB of
+  HTML with no ATS hostname anywhere, and no PeopleAdmin feed (`/postings/search.atom` → 404).
+  Unidentified in-house front end.
+- **CUNY** — `cuny.jobs` returns a 92-byte stub and `cuny.edu/employment` has no ATS hostname. CUNY
+  hires through CUNYfirst (PeopleSoft); no public feed found.
+- **NJIT, Stevens Institute, Delaware State University** — every plausible host (`njit.jobs`,
+  `careers.stevens.edu`, `careers.njit.edu`→`hr.njit.edu` with no ATS hostname, `jobs.desu.edu`, and the
+  `*.peopleadmin.com` variants) either fails DNS or carries no ATS hostname. Their real careers URLs
+  were not locatable from the public sites; re-check by hand.
+- **Rider, Pace, Montclair, St John's, Bryn Mawr, Haverford, Widener, TCNJ, Goldey-Beacom** — probed for
+  a PeopleAdmin feed; all 404 or DNS-fail. Not on PeopleAdmin (or on a differently-named host).
+- **Wistar Institute, Coriell Institute, Cold Spring Harbor, Yeshiva/Einstein, RWJBarnabas, Penn State
+  Health, Lehigh** — careers pages 403/404 or carry no ATS hostname. No feed found.
+
+**Leftover adapters worth building next, ranked by cap-exempt value:** Phenom People (NYP + Temple
+Health + many other hospitals), SuccessFactors (Weill Cornell), Taleo (Stony Brook, Wilmington
+University). Each would unlock several employers at once, the way PeopleAdmin unlocked five here.

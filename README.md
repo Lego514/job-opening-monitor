@@ -25,11 +25,14 @@ config (companies + filters)
   (AstraZeneca, DuPont, Solenis, W.L. Gore, Navient, WSFS Bank, M&T Bank, Corteva, ChristianaCare, Capital
   One, Vanguard, Comcast) plus big visa sponsors (NVIDIA, Salesforce, Adobe, Pfizer, GSK, Cisco, PayPal).
   Adding one is a single line in [`src/config.ts`](src/config.ts). (iCIMS / Incyte is **unsupported** — a JS-rendered SPA
-  with no server HTML or feed; see [`src/adapters/icims.ts`](src/adapters/icims.ts).)
+  with no server HTML or feed; see [`src/adapters/icims.ts`](src/adapters/icims.ts).) A few tenants —
+  universities especially — live on the shared `wd1.myworkdaysite.com` host, where the public URL is
+  `/recruiting/{tenant}/{site}` instead of `/{site}`; the optional `wdHost` field covers that (the CXS
+  API path is identical), so **University of Pennsylvania** needs no separate adapter.
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **~92 companies across 7 ATS platforms** — each returns its complete list every run, so dedup catches
+  **111 sources across 8 ATS platforms** — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
 - **Ashby adapter** — the best-shaped source here: one unauthenticated call returns the whole board
   *including* the plain-text JD and a parsed pay range, so these roles need no per-role detail fetch
@@ -38,17 +41,30 @@ config (companies + filters)
 - **SmartRecruiters adapter** — public REST API, no key. These are global boards, so the adapter asks
   for `country=us` server-side (Experian: 434 roles worldwide, 37 in the US) and pages by offset.
   Experian, NielsenIQ, Bosch.
-- **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites) and Nemours Children's
-  Health. Nemours is **cap-exempt**, so its roles skip the H-1B lottery and rank top.
-- **PageUp adapter** (University of Delaware) — the one source that needs a real browser. PageUp serves
-  plain server-rendered HTML, but UD fronts it with an AWS WAF challenge that answers a plain `fetch`
-  with HTTP 202 and a JavaScript proof-of-work page; no header combination gets past it. So this adapter
-  drives headless Chromium via Playwright, which CI installs with
-  `npx playwright install --with-deps chromium`. UD is a university and therefore **cap-exempt** — the
-  highest-value source here for the lottery problem. Parsing is a pure function
+- **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites), American Express and
+  BNY, plus the **cap-exempt** hospitals Nemours Children's Health, Northwell Health and Mount Sinai.
+- **PageUp adapter** — the one source type that needs a real browser. PageUp serves plain
+  server-rendered HTML, but most of these sites front it with an AWS WAF challenge that answers a plain
+  `fetch` with HTTP 202 and a JavaScript proof-of-work page; no header combination gets past it. So this
+  adapter drives headless Chromium via Playwright, which CI installs with
+  `npx playwright install --with-deps chromium`. All five are universities and therefore **cap-exempt**:
+  University of Delaware, Drexel, Rowan, Seton Hall, Swarthmore. Parsing is a pure function
   ([`normalizePageUp`](src/adapters/pageup.ts)), so it is unit-tested without a browser.
-  Note UD publishes no posting date (only a closing date), so its roles carry no age and bypass the
+  Note PageUp publishes no posting date (only a closing date), so these roles carry no age and bypass the
   recency filter — the `seen` state still guarantees one alert each.
+- **PeopleAdmin adapter** — the dominant higher-ed ATS. Every instance publishes its entire open board as
+  a public Atom feed at `/postings/search.atom`: no key, no pagination, an ISO `<published>` date the
+  recency filter can read, and the full JD inline (so like Ashby/Lever these need no detail fetch).
+  ~70 lines, all **cap-exempt**: Rutgers (886 roles), Villanova (345), Delaware Technical Community
+  College (160), Hofstra (78), Fordham (64). Only Rutgers publishes `pa:city`/`pa:state`; the rest get
+  their campus city from the source's `paLocation`.
+- **Cap-exempt coverage** — **21 of the 111 sources are H-1B cap-exempt** (universities, university
+  hospitals, nonprofit research orgs), the single most valuable property here because those petitions
+  skip the lottery: University of Delaware, Delaware Tech, ChristianaCare, Nemours (DE) · Penn, Jefferson
+  Health, CHOP, Drexel, Villanova, Swarthmore (Philadelphia) · Rutgers, Rowan, Seton Hall (NJ) · Mount
+  Sinai, Montefiore, Memorial Sloan Kettering, Northwell, Fordham, Hofstra, Cornell, Simons Foundation
+  (NY). `select.ts` ranks them second only to Delaware-local roles and the alert tags them
+  "✅ cap-exempt — no H-1B lottery".
 - **Location tiers** — alerts are ordered DE-local > cap-exempt > NYC metro > higher wage > fresher.
   Delaware is the top choice and gets a wider role filter (`LOCAL_FILTERS`, senior titles included); NYC
   is the second-choice metro and keeps the strict entry-level filter, so adding it widened the net
@@ -77,7 +93,7 @@ config (companies + filters)
   `supabase-js`: its client eagerly opens a realtime WebSocket that breaks under Node 20.)
 - **Dedup** is a Supabase table (`monitor_seen_jobs`) so you never get the same alert twice.
 - Pure logic (matching, sponsorship classification, remote detection, normalization, ranking) is
-  unit-tested with Vitest (32 tests), with defensive guards against malformed API records.
+  unit-tested with Vitest (100 tests), with defensive guards against malformed API records.
 
 ## Run it
 

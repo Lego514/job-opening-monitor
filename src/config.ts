@@ -124,6 +124,46 @@ export const COMPANIES: CompanySource[] = [
   // It needs the browser-driven adapter: UD fronts PageUp with an AWS WAF
   // challenge that answers a plain fetch with a 202 + JS proof-of-work page.
   { name: "University of Delaware", ats: "pageup", pageupUrl: "https://careers.udel.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // ------------------------------------------------------------------------
+  // MORE CAP-EXEMPT EMPLOYERS (universities, university hospitals, nonprofit
+  // research orgs). These skip the H-1B lottery entirely — the single highest-
+  // value property on this list, so select.ts ranks them second only to
+  // Delaware-local roles. Every id below was found by grepping the employer's
+  // OWN careers page for an ATS hostname and then probing the real API for a
+  // 200 with job data; none were guessed (see the backlog's "Workday 422"
+  // lesson). Ordered DE/Philadelphia first, then NYC metro.
+  //
+  // Cap-exempt on Workday — config-only, no new code.
+  { name: "Jefferson Health", ats: "workday", tenant: "jeffersonhealth", wd: "wd5", site: "ThomasJeffersonExternal", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Children's Hospital of Philadelphia", ats: "workday", tenant: "chop", wd: "wd108", site: "CHOPExternalCareers", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Memorial Sloan Kettering", ats: "workday", tenant: "msk", wd: "wd108", site: "MSKCC_Careers_Primary", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Montefiore", ats: "workday", tenant: "montefiore", wd: "wd12", site: "MMC", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Cornell University", ats: "workday", tenant: "cornell", wd: "wd1", site: "CornellCareerPage", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // Simons Foundation / Flatiron Institute — NYC nonprofit research org.
+  { name: "Simons Foundation", ats: "workday", tenant: "simonsfoundation", wd: "wd1", site: "simonsfoundationcareers", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // University of Pennsylvania — Workday, but on the SHARED myworkdaysite host,
+  // where the public URL is /recruiting/{tenant}/{site} instead of /{site}.
+  // `wdHost` covers that; the CXS API path is identical, so no new adapter.
+  { name: "University of Pennsylvania", ats: "workday", wdHost: "wd1.myworkdaysite.com", tenant: "upenn", site: "careers-at-penn", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // Cap-exempt on Oracle Cloud CE — same adapter as JPMC / Nemours.
+  { name: "Northwell Health", ats: "oracle", oracleHost: "eppr.fa.us2.oraclecloud.com", oracleSite: "CX_2", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Mount Sinai", ats: "oracle", oracleHost: "ejis.fa.us6.oraclecloud.com", oracleSite: "CX", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // Cap-exempt on PageUp — same browser-driven adapter as University of Delaware.
+  // (Drexel serves plain HTML; Rowan / Seton Hall / Swarthmore sit behind the
+  // same AWS WAF challenge UD does, so all four go through Chromium anyway.)
+  { name: "Drexel University", ats: "pageup", pageupUrl: "https://careers.drexel.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Rowan University", ats: "pageup", pageupUrl: "https://jobs.rowan.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Seton Hall University", ats: "pageup", pageupUrl: "https://jobs.shu.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Swarthmore College", ats: "pageup", pageupUrl: "https://careers.swarthmore.edu/en-us/listing/", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  // Cap-exempt on PeopleAdmin (the dominant higher-ed ATS) — public Atom feed,
+  // JD inline, no key. Rutgers is the only one of these that publishes
+  // pa:city/pa:state; the rest get their campus city from `paLocation` so the
+  // location filter (and the Delaware wide-net check) has something to read.
+  { name: "Rutgers University", ats: "peopleadmin", paHost: "jobs.rutgers.edu", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Villanova University", ats: "peopleadmin", paHost: "jobs.villanova.edu", paLocation: "Villanova, PA", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Delaware Technical Community College", ats: "peopleadmin", paHost: "dtcc.peopleadmin.com", paLocation: "Dover, DE", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Fordham University", ats: "peopleadmin", paHost: "careers.fordham.edu", paLocation: "Bronx, NY", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
+  { name: "Hofstra University", ats: "peopleadmin", paHost: "hofstra.peopleadmin.com", paLocation: "Hempstead, NY", everifyGuess: "Unknown", sponsorsGuess: "Unknown", capExempt: true },
   // iCIMS — NOT supported: Incyte runs a Jibe/iCIMS SPA that loads jobs via client XHR
   // (no server HTML, no RSS, no embedded JSON), so a plain fetch can't read it — it would
   // need a headless browser. Kept as a marker; adapters/icims.ts safely returns nothing.
