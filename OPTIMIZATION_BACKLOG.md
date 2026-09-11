@@ -72,7 +72,9 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 - **F4** `[x]` **Cost ceiling.** The stage sits AFTER the `seen` diff, so only genuinely new roles are
   classified; verdicts are cached in `monitor_llm_verdicts` (migration `0003`) keyed by posting key; the
   JD is truncated to ~4k chars; `LLM_MAX_PER_RUN` (80) and `LLM_DRY_RUN_MAX` (15) bound the worst case.
-  ~$0.0018/role.
+  Measured in CI: 80 roles for $0.2276 = **$0.0028/role** (my $0.0018 estimate was ~1.6x optimistic —
+  JDs tokenize denser than 4 chars/token). 72 of those 80 were rejected by the LLM, i.e. the stage cut
+  90% of what the widened pre-filter let through.
 - **F5** `[x]` **Graceful degradation.** No `ANTHROPIC_API_KEY` (the normal local case) → `checkEnv`
   reports it as degraded and the run takes the regex path unchanged. An API failure is caught per
   posting; a role with no verdict is never dropped, only never promoted.
@@ -80,6 +82,10 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   `markSeen` so the next run (15 min later) classifies them. Without this the first run after widening
   would have marked ~2400 backlog roles seen while screening only 80 — alerting the rest unscreened and
   then never looking at them again.
+- **F10** — *action needed:* `supabase/0003_llm_verdicts.sql` has NOT been run yet. The first CI run
+  logged `[llm] verdict cache read/write failed: HTTP 404 ... Could not find the table
+  'public.monitor_llm_verdicts'` and carried on (by design), but until it is applied every verdict is
+  paid for twice if a role reappears.
 - **F6** — *follow-up:* the verdict cache has no TTL or model-version invalidation. The `model` column is
   recorded, but changing `LLM_MODEL` won't re-classify cached roles. Add a cache sweep if the prompt or
   model changes materially.
@@ -93,7 +99,7 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   excludes rather than re-adding seniority ones.
 - **F9** — *follow-up:* `LLM_MAX_PER_RUN` is per-run, not per-day. At 96 runs/day the theoretical worst
   case is far over budget; in practice it can't be reached (it needs 80 genuinely new postings every 15
-  minutes) and steady-state is ~140 new/day ≈ $0.26. A real daily cap would need a spend-tracking table.
+  minutes) and steady-state is ~140 new/day ≈ $0.40 at the measured rate. A real daily cap would need a spend-tracking table.
 
 
 ## Remaining / follow-ups

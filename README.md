@@ -186,8 +186,13 @@ Four things keep this well under **$1/day**:
   held out of `seen` and come round again on the next run (~15 min), so a backlog drains over a few runs
   instead of being alerted unscreened and then forgotten.
 
-At Haiku 4.5 rates ($1/MTok in, $5/MTok out) and ~1.2k in / ~120 out tokens per role, that is about
-**$0.0018 per role**. Every run prints its own spend: `[llm] classified N postings, ~$X …`.
+At Haiku 4.5 rates ($1/MTok in, $5/MTok out) that works out to a **measured $0.0028 per role** (first CI
+run: 80 roles, $0.2276). Steady state is ~140 genuinely-new roles a day, so **~$0.40/day**. Every run
+prints its own spend: `[llm] classified N postings, ~$X …`.
+
+> **One-time backlog.** Widening the pre-filter makes ~2000 already-open roles look new. At 80/run they
+> drain over ~25 runs (about 6 hours of cron) for roughly **$5.60 once**. Raise `LLM_MAX_PER_RUN` to
+> drain it faster, or `npm start -- --seed` to skip screening the backlog entirely.
 
 ### Without a key
 
@@ -227,6 +232,8 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 
 1. **State tables:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql) and
    [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql) in your Supabase SQL editor.
+   Until `0003` is applied the run still works — it logs `[llm] verdict cache read/write failed` and
+   simply re-pays for verdicts it can't cache.
 2. **Secrets:** copy `.env.example` → `.env` and fill in (or set as GitHub repo secrets):
    - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only — never commit), `TRACKER_USER_ID`
    - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (from @BotFather / @userinfobot)
