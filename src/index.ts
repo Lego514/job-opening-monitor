@@ -7,6 +7,7 @@ import { fetchOracle, fetchOracleDetail } from "./adapters/oracle";
 import { fetchPageUp, fetchPageUpDetail, closePageUpBrowser } from "./adapters/pageup";
 import { fetchAshby } from "./adapters/ashby";
 import { fetchPeopleAdmin } from "./adapters/peopleadmin";
+import { fetchGithubList } from "./adapters/githublist";
 import {
   fetchSmartRecruiters,
   fetchSmartRecruitersDetail,
@@ -20,6 +21,7 @@ import { sendTelegram } from "./notify/telegram";
 import { sendEmail } from "./notify/email";
 import { selectAlertable } from "./select";
 import { postedDays } from "./recency";
+import { normalizedUrlKey } from "./urlkey";
 import { isDelaware, h1bWageHint } from "./rank";
 import { checkEnv, missingEnvMessage, type RunMode } from "./env";
 import { type CompanySource, type Posting, postingKey } from "./types";
@@ -44,9 +46,21 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c);
 }
 
+/** Dedup on two axes: the company-namespaced key, and the normalized application
+ *  URL. The second one exists for the aggregator lists (`githublist`), which
+ *  republish roles a direct ATS adapter already returned — same req, different id
+ *  and often a different company spelling, so `company:id` alone lets it through
+ *  twice. Direct-ATS sources are configured first and win, because only they have
+ *  a JD-detail path for enrichment. */
 function dedupe(list: Posting[]): Posting[] {
   const byKey = new Map<string, Posting>();
-  for (const p of list) byKey.set(postingKey(p), p);
+  const seenUrls = new Set<string>();
+  for (const p of list) {
+    const u = normalizedUrlKey(p.url);
+    if (u && seenUrls.has(u)) continue;
+    if (u) seenUrls.add(u);
+    byKey.set(postingKey(p), p);
+  }
   return [...byKey.values()];
 }
 
@@ -83,6 +97,7 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "ashby") return fetchAshby(c);
   if (c.ats === "smartrecruiters") return fetchSmartRecruiters(c);
   if (c.ats === "peopleadmin") return fetchPeopleAdmin(c);
+  if (c.ats === "githublist") return fetchGithubList(c);
   return [];
 }
 
@@ -150,6 +165,7 @@ async function enrichAll(posts: Posting[], concurrency = 8): Promise<void> {
 function metaLine(p: Posting): string {
   return [
     p.capExempt ? "✅ cap-exempt — no H-1B lottery" : null,
+    p.via ? `via ${p.via}` : null,
     p.remote ? "🏠 remote-eligible" : null,
     p.salary ? `💲${p.salary}` : null,
     h1bWageHint(p.salary),

@@ -84,6 +84,39 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 - **findSalary grant figures** `[x]` (2026-09-10) — university/research JDs cite funding ("a 5-year,
   $21.5 million initiative"), which won as the largest dollar amount and showed up as a salary.
   Figures followed by million/billion are now dropped.
+- **GitHub community lists** `[x]` (2026-09-11) — new `adapters/githublist.ts`. Three aggregator
+  sources read from `raw.githubusercontent.com` (the GitHub API's 60/h anonymous cap rules it out for a
+  15-minute cron):
+  - *SimplifyJobs/New-Grad-Positions* — `.github/scripts/listings.json` on `dev`, ~20k rows (~3k open,
+    ~200 matching and ≤14d). JSON beats the README table: real timestamps, structured locations,
+    `active`/`is_visible` flags.
+  - *vanshb03/New-Grad-2027* — identical schema, same parser. Near-dormant (newest row 2026-08-05), so
+    the recency filter drops all 370 of its matches today; kept because it's one cheap fetch and
+    auto-activates if the repo resumes.
+  - *zapplyjobs/New-Grad-Jobs-2027* — no JSON, so `parseZapplyTable` parses the README tables (~600
+    rows, ~120 matching). Note its "Posted" column is *time since the list last scraped the role*, not
+    the true posting date, so every row reads as fresh — harmless here (the repo only carries roles
+    under two weeks old) but don't trust it as a posting date.
+  - **Rejected:** *jobright-ai/Daily-H1B-Jobs-In-Tech* — parseable, and it flags explicit H-1B
+    sponsorship, but the repo has been dead since 2026-05-06 (~1,300 stale rows, no new signal).
+    Worth re-checking; it's the only list that publishes a sponsorship verdict per row.
+  - Cross-source dedup: `dedupe()` now also keys on `normalizedUrlKey` (`src/urlkey.ts`), because the
+    same req arrives from a list and from its direct ATS adapter with different ids *and* different
+    company spellings. Direct sources are ordered first in `COMPANIES` and win, since only they can
+    fetch the JD.
+  - Verified by dry run (2026-09-11): 96 sources, **0 FAILED**; lists fetched 2964 / 631 / 598;
+    536 matched of 19,174 fetched. Of those, 182 came via SimplifyJobs and 114 via Zapply (vanshb03
+    contributed 0, as expected). Noise found and fixed: one "Remote in UK" row — `isUSLocation()`
+    counts any "remote" as a US signal and the comma-prefixed `", uk"` block entry can't see that
+    phrasing, so `"in uk" / "in the uk" / "uk remote" / "remote - uk"` were added to `blockLocations`.
+  - Known residual: Zapply's apply links are `zapply.jobs/l/d/…` redirects, not ATS URLs, so
+    `normalizedUrlKey` can't collapse its rows against a direct adapter — 3 of 536 (0.6%). Its slug
+    does embed the source req id (`workday-comcast-comcast-careers-R443973`), so a third dedup axis on
+    that token vs `Posting.id` would close the gap; not worth the fragility at this duplicate rate.
+  - Follow-ups: (a) the Simplify file is ~14 MB (~2 MB gzipped) on every run — a conditional request
+    (`If-None-Match` against the raw ETag) would make most runs a 304; (b) the first live run will
+    surface ~200 backlogged matches at once — run `npm start -- --seed` first, or accept the
+    `MAX_ALERTS_PER_RUN` trickle.
 - **D1+** — per-source consecutive-failure state table.
 
 ---

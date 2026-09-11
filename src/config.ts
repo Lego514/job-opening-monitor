@@ -168,6 +168,19 @@ export const COMPANIES: CompanySource[] = [
   // (no server HTML, no RSS, no embedded JSON), so a plain fetch can't read it — it would
   // need a headless browser. Kept as a marker; adapters/icims.ts safely returns nothing.
   { name: "Incyte", ats: "icims", icimsHost: "careers-incyte.icims.com", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // Community-maintained GitHub new-grad lists. These are AGGREGATORS, not
+  // employers: `name` is only a label for logs/alerts, and every row carries its
+  // own company. Deliberately last in this array — dedupe() keeps the first copy
+  // of a duplicated application URL, and a direct ATS source is worth more than a
+  // list row (only the direct one has a JD-detail path for sponsorship + salary).
+  // Fetched from raw.githubusercontent.com; the `dev` branch is where these repos
+  // keep the machine-readable file that generates their README.
+  { name: "SimplifyJobs list", ats: "githublist", listFormat: "simplify-json", listUrl: "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  { name: "vanshb03 New-Grad-2027 list", ats: "githublist", listFormat: "simplify-json", listUrl: "https://raw.githubusercontent.com/vanshb03/New-Grad-2027/dev/.github/scripts/listings.json", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  { name: "Zapply New-Grad-2027 list", ats: "githublist", listFormat: "zapply-md", listUrl: "https://raw.githubusercontent.com/zapplyjobs/New-Grad-Jobs-2027/main/README.md", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  // Rejected: jobright-ai/Daily-H1B-Jobs-In-Tech. Its README table parses fine, but
+  // the repo has been dead since 2026-05-06 — every row is months stale, so it would
+  // add ~1,300 expired rows and no new signal. Re-evaluate if it resumes updating.
 ];
 
 // Server-side search terms (Workday) that narrow the pull; the include keywords
@@ -224,6 +237,10 @@ export const FILTERS: MatchFilters = {
     "pakistan", "bangladesh", "sri lanka", "luxembourg", "scotland", "wales", "england",
     "emea", "apac", "latam", "europe", "middle east", "latin america",
     ", uk", "u.k.", ", on", ", bc", // common foreign abbreviations (comma-prefixed = safe)
+    // "Remote in UK" slipped through: isUSLocation() treats any "remote" as a US
+    // signal, and the comma-prefixed ", uk" above can't see this phrasing. Caught
+    // in the community-list dry run — these forms are unambiguous, so block them.
+    "in uk", "in the uk", "uk remote", "remote - uk",
     // offshore tech hubs that often appear WITHOUT a country name (unambiguous — no
     // sizeable US city shares these names):
     "hyderabad", "bangalore", "bengaluru", "pune", "chennai", "mumbai", "gurgaon",

@@ -32,7 +32,7 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **111 sources across 8 ATS platforms** — each returns its complete list every run, so dedup catches
+  **111 sources across 9 ATS platforms**, plus three community job lists — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
 - **Ashby adapter** — the best-shaped source here: one unauthenticated call returns the whole board
   *including* the plain-text JD and a parsed pay range, so these roles need no per-role detail fetch
@@ -41,6 +41,30 @@ config (companies + filters)
 - **SmartRecruiters adapter** — public REST API, no key. These are global boards, so the adapter asks
   for `country=us` server-side (Experian: 434 roles worldwide, 37 in the US) and pages by offset.
   Experian, NielsenIQ, Bosch.
+- **GitHub community-list adapter** — the one source type that isn't an employer. Curated new-grad
+  lists on GitHub are rebuilt every few minutes and cover hundreds of companies this monitor will never
+  have a config line for, so they run as three aggregator "sources" read straight from
+  `raw.githubusercontent.com` (never the GitHub API — anonymous callers get 60 requests/hour, which a
+  15-minute cron would burn on retries alone). Each row's `company` is the **employer**, and
+  `Posting.via` carries the list name so alerts say where a role came from.
+  - [SimplifyJobs/New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions) — reads the
+    machine-readable `listings.json` on the `dev` branch (the file that generates the README), **not**
+    the rendered table: it carries real posting timestamps, structured locations and an `active` flag
+    that the markdown loses. ~20k rows, ~3k open, ~200 matching and recent.
+  - [vanshb03/New-Grad-2027](https://github.com/vanshb03/New-Grad-2027) — same `listings.json` schema,
+    same parser. Currently near-dormant (newest row Aug 2026), so the recency filter drops all of it;
+    it costs one small fetch and starts contributing on its own if the repo wakes up for the 2027 cycle.
+  - [zapplyjobs/New-Grad-Jobs-2027](https://github.com/zapplyjobs/New-Grad-Jobs-2027) — publishes no
+    JSON, so this one parses the README's markdown tables
+    ([`parseZapplyTable`](src/adapters/githublist.ts), pure + unit-tested against a fixture copied from
+    the real file). Updated every ~10 minutes; ~600 rows, ~120 matching.
+  - **Rejected:** [jobright-ai/Daily-H1B-Jobs-In-Tech](https://github.com/jobright-ai/Daily-H1B-Jobs-In-Tech).
+    Its table parses fine and it flags explicit H-1B sponsorship, but the repo has been dead since
+    2026-05-06 — ~1,300 rows, all months stale.
+  - These rows have no JD we can fetch, so `sponsorship` stays `unknown` — except where the list itself
+    states a disqualifier ("Does Not Offer Sponsorship", "U.S. Citizenship is Required"), which is
+    passed through as a one-line description for the normal sponsorship classifier. `capExempt` is never
+    set from a list: none of them publish it.
 - **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites), American Express and
   BNY, plus the **cap-exempt** hospitals Nemours Children's Health, Northwell Health and Mount Sinai.
 - **PageUp adapter** — the one source type that needs a real browser. PageUp serves plain
@@ -91,9 +115,17 @@ config (companies + filters)
   (e.g. Richmond/McLean VA) are correctly dropped instead of slipping through.
 - **Zero runtime dependencies** — native `fetch` for the ATS, Telegram, Resend, and Supabase REST. (No
   `supabase-js`: its client eagerly opens a realtime WebSocket that breaks under Node 20.)
-- **Dedup** is a Supabase table (`monitor_seen_jobs`) so you never get the same alert twice.
+- **Dedup** is a Supabase table (`monitor_seen_jobs`) so you never get the same alert twice. Within a
+  run there are two axes: the `company:id` key, and the **normalized application URL**
+  ([`normalizedUrlKey`](src/urlkey.ts) — host + path, minus `www`, tracking params, trailing slash and
+  Workday's optional locale segment). The second exists for the community lists, which republish reqs a
+  direct ATS adapter already returned under a different id and often a different company spelling.
+  Direct sources are configured first and win the tie, because only they have a JD-detail path.
+  **Known residual:** Zapply publishes `zapply.jobs/l/d/…` redirect links rather than the employer's
+  ATS URL, so its rows can't be collapsed this way — 3 of 536 matches in the verification dry run were
+  such duplicates (0.6%). SimplifyJobs publishes real ATS URLs and collapses correctly.
 - Pure logic (matching, sponsorship classification, remote detection, normalization, ranking) is
-  unit-tested with Vitest (100 tests), with defensive guards against malformed API records.
+  unit-tested with Vitest (123 tests), with defensive guards against malformed API records.
 
 ## Run it
 

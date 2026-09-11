@@ -7,7 +7,8 @@ export type Ats =
   | "pageup"
   | "ashby"
   | "smartrecruiters"
-  | "peopleadmin";
+  | "peopleadmin"
+  | "githublist";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -45,6 +46,12 @@ export interface CompanySource {
   // Fallback location for PeopleAdmin feeds that omit pa:city/pa:state
   // (Villanova, DTCC, Fordham, Hofstra all do) — the campus city.
   paLocation?: string; // e.g. "Dover, DE"
+  // Community GitHub job lists (githublist) — one "source" is an aggregator, not
+  // an employer: `name` is a label for logs/alerts only and each row carries its
+  // own company. `listUrl` must be a raw.githubusercontent.com file (the GitHub
+  // API caps anonymous callers at 60 req/h).
+  listUrl?: string; // e.g. "https://raw.githubusercontent.com/.../listings.json"
+  listFormat?: "simplify-json" | "zapply-md";
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;
@@ -73,6 +80,7 @@ export interface Posting {
   srDetail?: string; // SmartRecruiters detail endpoint, for enrichment
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
   capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
+  via?: string; // aggregator this row came from (e.g. "SimplifyJobs list"); unset for direct ATS fetches
 }
 
 /** Stable, company-namespaced key used for dedup + seen-state storage. */
