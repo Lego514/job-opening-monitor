@@ -1,0 +1,6 @@
+# Only used by the CI step that runs scripts/jobspy_scrape.py (and by
+# `pip install -r` locally). Kept as a file, not an inline `pip install`, so
+# actions/setup-python has something to key its pip cache on — and so the scraper
+# version is pinned: this library tracks board HTML that changes without notice,
+# and an unpinned upgrade is exactly how a quiet 0-row run happens.
+python-jobspy==1.1.82

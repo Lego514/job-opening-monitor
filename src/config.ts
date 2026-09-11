@@ -181,6 +181,16 @@ export const COMPANIES: CompanySource[] = [
   // Rejected: jobright-ai/Daily-H1B-Jobs-In-Tech. Its README table parses fine, but
   // the repo has been dead since 2026-05-06 — every row is months stale, so it would
   // add ~1,300 expired rows and no new signal. Re-evaluate if it resumes updating.
+  //
+  // The long tail: Indeed / ZipRecruiter rows scraped by scripts/jobspy_scrape.py
+  // into $JOBSPY_FILE before the Node run. Another aggregator (each row names its
+  // own employer), and the only source here that reaches small/mid employers with
+  // no ATS board of their own — which is most of Delaware. LAST in the array for
+  // the same reason as the lists above, and it matters more here: Indeed rows
+  // carry the employer's real ATS URL, so they collapse against a direct
+  // adapter's copy and the direct one (configured earlier) wins. Takes no config
+  // — no file, no rows, never a failure.
+  { name: "JobSpy", ats: "jobspy", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
 ];
 
 // Server-side search terms (Workday) that narrow the pull; the include keywords

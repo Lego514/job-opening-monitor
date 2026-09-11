@@ -4,3 +4,5 @@ node_modules
 *.log
 dist
 coverage
+jobspy-jobs.json
+__pycache__/

@@ -8,6 +8,7 @@ import { fetchPageUp, fetchPageUpDetail, closePageUpBrowser } from "./adapters/p
 import { fetchAshby } from "./adapters/ashby";
 import { fetchPeopleAdmin } from "./adapters/peopleadmin";
 import { fetchGithubList } from "./adapters/githublist";
+import { fetchJobSpy } from "./adapters/jobspy";
 import {
   fetchSmartRecruiters,
   fetchSmartRecruitersDetail,
@@ -110,6 +111,7 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "smartrecruiters") return fetchSmartRecruiters(c);
   if (c.ats === "peopleadmin") return fetchPeopleAdmin(c);
   if (c.ats === "githublist") return fetchGithubList(c);
+  if (c.ats === "jobspy") return fetchJobSpy(c);
   return [];
 }
 
@@ -156,8 +158,13 @@ async function enrich(p: Posting): Promise<void> {
     const cls = classifySponsorship(description);
     p.sponsorship = cls.status;
     p.sponsorshipReason = cls.reason;
-    p.salary = findSalary(description);
-    p.remote = detectRemote(description);
+    // Keep an adapter-provided salary when the JD prose states no number — the
+    // aggregator boards (JobSpy) publish a structured pay range that the JD text
+    // itself often doesn't repeat, and the wage tier in select.ts reads this.
+    p.salary = findSalary(description) ?? p.salary ?? null;
+    // Same rule for remote: a board's structured is_remote flag is stronger
+    // evidence than JD prose, so the scan can only ever add the flag.
+    p.remote = detectRemote(description) || p.remote === true;
     // Keep a bounded slice of the JD for the LLM stage, so classification never
     // has to re-fetch the detail page it already paid for. Seniority and
     // sponsorship language lives near the top; the tail is benefits boilerplate.

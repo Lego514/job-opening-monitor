@@ -353,3 +353,74 @@ the known failure mode is applications stalling, not opportunities going unseen.
   it can't recover sponsor history or cap-exempt flags — probably not worth the code.
 - **Weekly "you applied to N of 35 queued" nudge.** The counts are all in `monitor_digest` +
   `applications`; this is the natural next lever against the stall.
+
+---
+
+## The long tail via JobSpy (2026-09-11)
+
+**The problem it kills:** every one of the ~114 sources is an employer's *own* ATS, so the monitor is
+structurally blind to employers that don't run one — the small and mid-size companies, and most of
+Delaware, that only ever post to Indeed / ZipRecruiter / LinkedIn. No amount of adding config lines
+reaches them; they have no board to add.
+
+### Shipped
+- `scripts/jobspy_scrape.py` — fixed 5 terms × 5 locations × enabled boards matrix over
+  [python-jobspy](https://github.com/speedyapply/JobSpy), `hours_old=72`, 50/query, `country_indeed=USA`.
+  Thread pool + per-query `try`/`except` + a wall-clock budget (`JOBSPY_BUDGET_SEC`, 150s); dedups within
+  the file on a normalized URL; drops rows with no employer; one summary line per board. Writes
+  `$JOBSPY_OUT`.
+- `src/adapters/jobspy.ts` — pure `normalizeJobSpy()` + a file read that **cannot throw**. 18 unit tests
+  against a fixture trimmed from a real run (226 total).
+- `scripts/jobspy-requirements.txt` (pinned `python-jobspy==1.1.82`), the `setup-python` + pip-cache +
+  scrape steps in `monitor.yml` (all `continue-on-error`, `timeout-minutes: 5`), one `COMPANIES` entry,
+  one `Ats` member, two lines in `index.ts`.
+- `src/urlkey.ts` — a two-entry allow-list of *identifying* query params (`jk`, `currentJobId`).
+
+### Measured (2026-09-11)
+- **Local (residential IP):** Indeed 25/25 queries, 1,006 rows → 526 unique, **7.3s** total. ZipRecruiter
+  Cloudflare `403` then `429` on every query, **0 rows**. LinkedIn not attempted (see below).
+- The 526 rows carried a `job_url_direct` (the employer's real ATS link) on **100%** of rows and a JD on
+  **100%**; 353 carried a structured pay range; 29 were Delaware-local.
+
+### Decisions worth not relitigating
+- **Out-of-process, file-passed, never fatal.** The scraper is ToS-gray, fragile and blockable. Calling it
+  in-process would hand the monitor its failure modes; a JSON handoff plus a `continue-on-error` step
+  means "blocked today" costs one log line. The adapter has no throw path at all.
+- **No staffing-agency blocklist.** Asked for and deliberately not built: such lists are unmaintainable
+  and cut real employers. The LLM screen already answers "is this a real fit", which is the actual
+  question. The one hard drop is an empty company — that row can't be sponsor-matched, tracked or deduped.
+- **LinkedIn off by default.** It rate-limits hard without residential proxies; left configurable
+  (`JOBSPY_SITES`) rather than wired in, so it can't quietly eat the time budget.
+- **ZipRecruiter kept despite scoring 0.** It costs ~2s, and an IP-level block is not a permanent
+  property of the source. The summary line now says explicitly when a board returns 0 rows from every
+  "successful" query — jobspy swallows 403/429 and returns an empty frame, so silence would otherwise
+  read as "no jobs today".
+- **Prefer `job_url_direct`.** It is both the better apply link and the thing that lets `dedupe()`
+  collapse an Indeed copy of a req we already have from the employer's own board.
+- **Pin the library.** It tracks board HTML that changes without notice; an unpinned upgrade is exactly
+  how a quiet 0-row run happens.
+- **Last in `COMPANIES`.** `dedupe()` keeps the first copy of a URL, so a direct adapter (which has a
+  real JD-detail path) always wins the tie.
+- **An adapter-provided salary survives enrichment.** `enrich()` now does
+  `findSalary(description) ?? p.salary ?? null` — the boards publish a structured range the JD prose
+  often never repeats, and `select.ts` ranks on it.
+
+### Follow-ups
+- **Residual dedup gap.** Two shapes, both seen in the 2026-09-11 dry run:
+  (a) a row with no `job_url_direct` keeps the aggregator URL (the Zapply problem, already documented) —
+  currently ~0% on Indeed;
+  (b) `job_url_direct` is a *vanity redirect*, not the ATS URL. JPMorgan advertises on Indeed as
+  `JPMorganChase.contacthr.com/<id>` while our Oracle CE adapter returns
+  `jpmc.fa.oraclecloud.com/…/job/<id>`, so those reqs appear twice. Collapsing them needs a HEAD/redirect
+  resolve per row, which is a fetch-per-posting this design is specifically trying to avoid — a
+  per-employer vanity-host alias map would be the cheap 80% fix if the duplicates get annoying.
+- **ZipRecruiter/LinkedIn need proxies to be real sources.** Both are IP-blocked from here and probably
+  more so from a GitHub runner. A residential proxy is the only known fix and costs money — the honest
+  position is that this feature is an *Indeed* feature today.
+- **The matrix is fixed and small.** If Indeed keeps working, the cheapest next win is more DE/PA ring
+  cities (Dover, Bear, Middletown, King of Prussia) rather than more search terms — the terms already
+  overlap heavily (1,006 raw → 526 unique).
+- **Per-board health over time.** A board silently degrading to 0 rows is only visible in the run log
+  today. The `seen` table could carry a per-source row count to make a drop alertable.
+- **Google Jobs (`site_name="google"`) is untried.** jobspy supports it and it aggregates the aggregators;
+  it uses a different query syntax, so it's a separate piece of work.

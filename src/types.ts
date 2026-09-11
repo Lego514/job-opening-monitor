@@ -10,7 +10,8 @@ export type Ats =
   | "ashby"
   | "smartrecruiters"
   | "peopleadmin"
-  | "githublist";
+  | "githublist"
+  | "jobspy";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -54,6 +55,9 @@ export interface CompanySource {
   // API caps anonymous callers at 60 req/h).
   listUrl?: string; // e.g. "https://raw.githubusercontent.com/.../listings.json"
   listFormat?: "simplify-json" | "zapply-md";
+  // JobSpy (jobspy) — also an aggregator, not an employer. It takes no config:
+  // the rows come from the JSON file at $JOBSPY_FILE, written by the Python
+  // scraper step before the run (src/adapters/jobspy.ts).
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;

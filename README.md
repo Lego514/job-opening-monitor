@@ -14,7 +14,8 @@ job turns that stream into a five-item **apply queue** at 08:00 ET — see
 ```
 config (companies + filters)
    → adapters (Workday/Greenhouse/Lever/    extract
-     Oracle CE APIs + PageUp via browser)
+     Oracle CE APIs + PageUp via browser
+     + JobSpy long tail, scraped first)
    → match (wide keyword + location net)    pre-filter
    → JD scan (sponsorship + salary)         enrich
    → diff vs. seen (Supabase)               dedup
@@ -38,7 +39,8 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **111 sources across 9 ATS platforms**, plus three community job lists — each returns its complete list every run, so dedup catches
+  **111 sources across 9 ATS platforms**, plus three community job lists and the JobSpy long-tail
+  scraper — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
 - **Ashby adapter** — the best-shaped source here: one unauthenticated call returns the whole board
   *including* the plain-text JD and a parsed pay range, so these roles need no per-role detail fetch
@@ -71,6 +73,38 @@ config (companies + filters)
     states a disqualifier ("Does Not Offer Sponsorship", "U.S. Citizenship is Required"), which is
     passed through as a one-line description for the normal sponsorship classifier. `capExempt` is never
     set from a list: none of them publish it.
+- **JobSpy adapter — the long tail.** Every source above is an employer's own ATS, which is precise and
+  structurally blind to the employers that *have no ATS board*: the small and mid-size companies —
+  most of Delaware — that only ever post to Indeed, ZipRecruiter or LinkedIn. This source covers them.
+  [`scripts/jobspy_scrape.py`](scripts/jobspy_scrape.py) runs **before** the Node process (a separate,
+  `continue-on-error` workflow step) using the open-source [python-jobspy](https://github.com/speedyapply/JobSpy)
+  scraper over a fixed matrix — 5 search terms (`data analyst`, `business analyst`, `data engineer`,
+  `software engineer`, `analytics`) × 5 locations (Wilmington DE, Newark DE, Philadelphia, NYC, and a
+  nationwide remote sweep) × the enabled boards, `hours_old=72`, 50 results/query — and writes one JSON
+  file. [`src/adapters/jobspy.ts`](src/adapters/jobspy.ts) reads that file from `$JOBSPY_FILE` and
+  **never fails**: no file (the step was blocked, timed out, or you're running locally) means one log
+  line, `[fetch] JobSpy: skipped (no file)`, and zero rows.
+  - **It is out-of-process on purpose.** The scraper is ToS-gray and fragile, so the monitor must not be
+    able to inherit its failure modes. Per-query `try`/`except`, a wall-clock budget
+    (`JOBSPY_BUDGET_SEC`, 150s), and a `timeout-minutes` on the step.
+  - **Which boards actually answer** (measured 2026-09-11): **Indeed** answered all 25 queries — 1,006
+    rows, 526 unique, in **7.3s**. **ZipRecruiter** answered every query with Cloudflare `403` then
+    `429` — 0 rows, from a residential IP. It stays configured (it costs ~2s and the block may be
+    IP- or day-specific), and the summary line says plainly when a board returns nothing from every
+    query. **LinkedIn is off by default** — it rate-limits hard without residential proxies; enable it
+    with the `JOBSPY_SITES` repo Variable if you ever have proxies.
+  - Like the GitHub lists, one "source" is not one employer: every row names its own company and
+    `Posting.via` carries the board ("Indeed"/"ZipRecruiter"). Rows arrive **with the full JD and a
+    structured pay range**, so they take the no-detail-fetch enrichment path (same as Ashby/Lever) and
+    feed the sponsorship scan and the LLM screen directly.
+  - **What it actually adds** (dry run, 2026-09-11): of 526 scraped rows, **405 survived into the ranked
+    output across 321 distinct employers**, 15 of them Delaware-area — CSC, Ryder, DXC, TD, Cigna, plus
+    genuinely small shops (MBMS LLC, Cobbs Creek Healthcare) that no ATS config line would ever reach.
+    That is the blind spot this source exists to cover.
+  - **Staffing-agency noise is expected and deliberately not filtered.** An agency blocklist is
+    unmaintainable and would cut real employers with it; the LLM stage is what judges fit. The one hard
+    drop is a row with no employer name — useless for the sponsor lookup, the tracker row and dedup.
+  - Nothing scraped is ever committed: the JSON lives in the runner's temp dir and dies with the runner.
 - **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites), American Express and
   BNY, plus the **cap-exempt** hospitals Nemours Children's Health, Northwell Health and Mount Sinai.
 - **PageUp adapter** — the one source type that needs a real browser. PageUp serves plain
@@ -143,8 +177,20 @@ config (companies + filters)
   **Known residual:** Zapply publishes `zapply.jobs/l/d/…` redirect links rather than the employer's
   ATS URL, so its rows can't be collapsed this way — 3 of 536 matches in the verification dry run were
   such duplicates (0.6%). SimplifyJobs publishes real ATS URLs and collapses correctly.
+  **JobSpy rows collapse well** — Indeed publishes `job_url_direct`, the employer's own ATS link, on
+  essentially every row (526/526 in the verification run), and the adapter prefers it over the
+  `indeed.com/viewjob?jk=…` redirect for exactly this reason. The residual: a row whose direct link is
+  missing keeps the Indeed URL and can't collapse against the same req from a direct adapter, and a
+  board that publishes its *own* redirect (ZipRecruiter) would behave like Zapply does. The real
+  residual seen in the verification run is a *vanity* direct link: JPMorgan advertises on Indeed as
+  `JPMorganChase.contacthr.com/<id>` while our Oracle CE adapter returns the `jpmc.fa.oraclecloud.com`
+  URL, so a handful of JPMC reqs appear twice. Resolving that needs a redirect-follow per row, which is
+  exactly the per-posting fetch this source is designed to avoid. Because the
+  identity of such a URL lives in a query param rather than the path, `normalizedUrlKey` keeps a tiny
+  allow-list of identifying params (`jk`, `currentJobId`) while still dropping tracking ones — without
+  that, every Indeed row in a run would normalize to `indeed.com/viewjob` and collapse into one.
 - Pure logic (matching, prompt building, verdict parsing, sponsorship classification, remote detection,
-  normalization, ranking) is unit-tested with Vitest (151 tests) — the API is mocked, so `npm test` makes
+  normalization, ranking) is unit-tested with Vitest (226 tests) — the API is mocked, so `npm test` makes
   no network calls — with defensive guards against malformed API records and malformed model output.
 
 ## The LLM screen
@@ -295,6 +341,15 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 - `MAX_AGE_DAYS` — only consider roles posted within N days (default **14**; applied *before* the JD-detail
   fetches so the all-US volume stays cheap). Set higher for a one-time broad sweep.
 - `npm run digest -- --dry-run` — print tomorrow's apply queue without sending or recording it.
+- **JobSpy long tail** (optional, off unless you point it at a file):
+  ```bash
+  pip install -r scripts/jobspy-requirements.txt
+  JOBSPY_OUT=/tmp/jobspy.json python scripts/jobspy_scrape.py   # ~8s when Indeed answers
+  JOBSPY_FILE=/tmp/jobspy.json npm run dry-run                  # → "[fetch] JobSpy: N"
+  ```
+  Tuning (repo Variables in CI, env vars locally): `JOBSPY_SITES` (default `indeed,zip_recruiter`; add
+  `linkedin` only with proxies), `JOBSPY_HOURS_OLD` (**72**), `JOBSPY_RESULTS` (**50**/query),
+  `JOBSPY_BUDGET_SEC` (**150**), `JOBSPY_WORKERS` (**6**).
 - `npm run build:sponsors` — rebuild `data/sponsors.json` from USCIS (network; never run inside the
   monitor). `-- --years 5` widens the fiscal-year window from the default 3.
 - Edit keyword / location / exclude lists and the company list in [`src/config.ts`](src/config.ts).
@@ -390,8 +445,15 @@ whose petitions skip the lottery. Each run logs `[sponsor] matched N/M alertable
 
 - Workday's CXS endpoint is **unofficial** — the adapter is isolated and a failing source is logged, not
   fatal. Tests guard the parser against shape changes.
-- **Coverage is the configured companies only** — it's a focused monitor, not a universal scraper. Add
-  companies by editing `src/config.ts`.
+- **Coverage is the configured companies plus the JobSpy long tail** — it's a focused monitor with one
+  aggregator bolted on, not a universal scraper. Add companies by editing `src/config.ts`.
+- **The JobSpy source is the fragile one, by design.** It scrapes aggregator boards, which is ToS-gray,
+  breaks when their HTML changes, and gets blocked — ZipRecruiter blocked every request from a home IP
+  on day one, and a GitHub runner's datacenter IP is blocked more readily than a home one, so expect
+  fewer rows in CI than locally. Treat any number it returns as a bonus: the step is
+  `continue-on-error`, the library version is pinned in `scripts/jobspy-requirements.txt`, and a run
+  where it produces nothing is a normal run. Rows also skew toward staffing agencies and reposts —
+  that is what the LLM screen is for.
 - GitHub Actions cron is best-effort (can lag a few minutes). Fine for this purpose.
 - **The sponsor index lags.** USCIS published FY2023 last; a company that only started sponsoring in
   FY2024–25 shows as "no filings found" until the next export lands. It is also keyed on the *petitioning
