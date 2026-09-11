@@ -11,7 +11,7 @@
  * "unknown"; ~80% of matches came back "unknown").
  *
  * Cost discipline, in order of how much it saves:
- *   1. Only NEW postings are classified (post-diff), never the ~280 matches.
+ *   1. Only NEW postings are classified (post-diff), never the ~2500 matches.
  *   2. Verdicts are cached in Supabase by posting key, so a re-run, a seed, or
  *      a role that reappears costs nothing.
  *   3. The JD is truncated (JD_CHARS) — sponsorship and seniority language is

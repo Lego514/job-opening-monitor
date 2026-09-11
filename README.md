@@ -130,7 +130,7 @@ config (companies + filters)
   ATS URL, so its rows can't be collapsed this way — 3 of 536 matches in the verification dry run were
   such duplicates (0.6%). SimplifyJobs publishes real ATS URLs and collapses correctly.
 - Pure logic (matching, prompt building, verdict parsing, sponsorship classification, remote detection,
-  normalization, ranking) is unit-tested with Vitest (117 tests) — the API is mocked, so `npm test` makes
+  normalization, ranking) is unit-tested with Vitest (151 tests) — the API is mocked, so `npm test` makes
   no network calls — with defensive guards against malformed API records and malformed model output.
 
 ## The LLM screen
@@ -162,8 +162,9 @@ than to pay a model to reject). [`src/llm.ts`](src/llm.ts) then sends title + lo
 | `remoteUS` | boolean |
 | `summary` | ≤20 words, shown in the alert |
 
-On a live dry-run comparison the pre-filter went from **297** matches to **2004** (of ~15k fetched) —
-that is the size of the blind spot, and the LLM is what makes the extra 1700 safe to look at.
+On a live dry-run comparison the pre-filter went from **563** matches to **2517** (of ~22k fetched) —
+that is the size of the blind spot, and the LLM is what makes the extra ~1950 safe to look at. The run
+takes ~6m40s end to end, still inside the 15-min cron.
 
 Roles the model marks `newGradFit: no` or `seniority` ≥ mid are dropped from alerts; the rest carry the
 verdict into the Telegram/email meta line, and a `no-sponsorship` verdict sets the same `⛔` flag the

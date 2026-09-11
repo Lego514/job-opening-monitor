@@ -321,7 +321,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Classify only what's genuinely new — never the ~2000 that match every run.
+  // Classify only what's genuinely new — never the ~2500 that match every run.
   // Cached verdicts make a re-run or a reappearing role free. Rank order first,
   // so if the ceiling bites it bites the least promising roles.
   const deferred = await classifyStage(

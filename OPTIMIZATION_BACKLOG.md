@@ -78,7 +78,7 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   posting; a role with no verdict is never dropped, only never promoted.
 - **F4b** `[x]` Postings past `LLM_MAX_PER_RUN` are DEFERRED, not consumed: they are held out of
   `markSeen` so the next run (15 min later) classifies them. Without this the first run after widening
-  would have marked ~1900 backlog roles seen while screening only 80 — alerting the rest unscreened and
+  would have marked ~2400 backlog roles seen while screening only 80 — alerting the rest unscreened and
   then never looking at them again.
 - **F6** — *follow-up:* the verdict cache has no TTL or model-version invalidation. The `model` column is
   recorded, but changing `LLM_MODEL` won't re-classify cached roles. Add a cache sweep if the prompt or
@@ -87,8 +87,9 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   than the system prompt, so a `cache_control` breakpoint would be a no-op today. Revisit if the system
   prompt grows.
 - **F8** — *follow-up:* the widened pre-filter raises the number of enriched postings —
-  measured 297 → 2004 matches per run, so ~7x the JD detail fetches. That is wall-clock, not dollars
-  (a dry run still finishes well inside the 15-min cron). If runs get slow, tighten the discipline
+  measured 563 → 2517 matches per run, so ~4.5x the JD detail fetches. A full dry run now takes ~6m40s
+  (was ~2m) — wall-clock, not dollars, and still inside the 15-min cron, but the margin is no longer
+  large. If runs get slow, tighten the discipline
   excludes rather than re-adding seniority ones.
 - **F9** — *follow-up:* `LLM_MAX_PER_RUN` is per-run, not per-day. At 96 runs/day the theoretical worst
   case is far over budget; in practice it can't be reached (it needs 80 genuinely new postings every 15
