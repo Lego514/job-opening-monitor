@@ -29,6 +29,11 @@ export const COMPANIES: CompanySource[] = [
   { name: "Cisco", ats: "workday", tenant: "cisco", wd: "wd5", site: "Cisco_Careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "PayPal", ats: "workday", tenant: "paypal", wd: "wd1", site: "jobs", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Workday Inc", ats: "workday", tenant: "workday", wd: "wd5", site: "Workday", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // Found by grepping each careers page for an ATS hostname rather than guessing
+  // a tenant — the method the backlog now mandates.
+  { name: "S&P Global", ats: "workday", tenant: "spgi", wd: "wd5", site: "spgi_careers", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Nasdaq", ats: "workday", tenant: "nasdaq", wd: "wd1", site: "global_external_site", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Guardian Life", ats: "workday", tenant: "guardianlife", wd: "wd5", site: "guardian-life-careers", everifyGuess: "Yes", sponsorsGuess: "Unknown" },
   // Greenhouse employers (remote-friendly tech, strong sponsors) — different adapter, clean public API.
   { name: "Affirm", ats: "greenhouse", ghToken: "affirm", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Reddit", ats: "greenhouse", ghToken: "reddit", everifyGuess: "Yes", sponsorsGuess: "Yes" },
@@ -79,6 +84,26 @@ export const COMPANIES: CompanySource[] = [
   { name: "Yext", ats: "greenhouse", ghToken: "yext", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Attentive", ats: "greenhouse", ghToken: "attentive", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   { name: "Klaviyo", ats: "greenhouse", ghToken: "klaviyo", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // Ashby employers. The best-shaped source here: one call returns the board
+  // WITH the plain-text JD and a parsed pay range, so these need no detail
+  // fetch. Ramp and Harvey are NYC-heavy; the rest are strong sponsors.
+  { name: "Ramp", ats: "ashby", ashbyToken: "ramp", everifyGuess: "Yes", sponsorsGuess: "Yes" },  // 109 NYC
+  { name: "Harvey", ats: "ashby", ashbyToken: "harvey", everifyGuess: "Yes", sponsorsGuess: "Yes" },  // 92 NYC
+  { name: "Decagon", ats: "ashby", ashbyToken: "decagon", everifyGuess: "Yes", sponsorsGuess: "Yes" },  // 24 NYC
+  { name: "Warp", ats: "ashby", ashbyToken: "warp", everifyGuess: "Yes", sponsorsGuess: "Yes" },  // 19 NYC
+  { name: "OpenAI", ats: "ashby", ashbyToken: "openai", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Notion", ats: "ashby", ashbyToken: "notion", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Cursor", ats: "ashby", ashbyToken: "cursor", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Perplexity", ats: "ashby", ashbyToken: "perplexity", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "ElevenLabs", ats: "ashby", ashbyToken: "elevenlabs", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Sierra", ats: "ashby", ashbyToken: "sierra", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Vanta", ats: "ashby", ashbyToken: "vanta", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Linear", ats: "ashby", ashbyToken: "linear", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  // SmartRecruiters employers. Global boards, so the adapter asks for country=us
+  // server-side (Experian: 434 roles worldwide, 37 in the US).
+  { name: "Experian", ats: "smartrecruiters", srCompany: "Experian", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "NielsenIQ", ats: "smartrecruiters", srCompany: "NielsenIQ", everifyGuess: "Yes", sponsorsGuess: "Yes" },
+  { name: "Bosch", ats: "smartrecruiters", srCompany: "BoschGroup", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // Lever employers (clean public API; description inline).
   { name: "Spotify", ats: "lever", leverToken: "spotify", everifyGuess: "Yes", sponsorsGuess: "Yes" },
   // Oracle Cloud Candidate Experience — JPMorgan Chase (Wilmington DE is a major

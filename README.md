@@ -29,8 +29,15 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **~74 companies across 5 ATS platforms** — each returns its complete list every run, so dedup catches
+  **~92 companies across 7 ATS platforms** — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
+- **Ashby adapter** — the best-shaped source here: one unauthenticated call returns the whole board
+  *including* the plain-text JD and a parsed pay range, so these roles need no per-role detail fetch
+  (same enrichment path as Lever). Ramp (NYC HQ), Harvey, Decagon, Warp, OpenAI, Notion, Cursor,
+  Perplexity, ElevenLabs, Sierra, Vanta, Linear.
+- **SmartRecruiters adapter** — public REST API, no key. These are global boards, so the adapter asks
+  for `country=us` server-side (Experian: 434 roles worldwide, 37 in the US) and pages by offset.
+  Experian, NielsenIQ, Bosch.
 - **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites) and Nemours Children's
   Health. Nemours is **cap-exempt**, so its roles skip the H-1B lottery and rank top.
 - **PageUp adapter** (University of Delaware) — the one source that needs a real browser. PageUp serves

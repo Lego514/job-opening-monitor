@@ -65,8 +65,20 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
   tenant/site ids were guesses at careers sites that aren't Workday at all. Before adding a source,
   confirm the real ATS by grepping the employer's careers page for an ATS hostname; don't guess a
   Workday tenant from the company name. Sallie Mae / Truist are still unverified on that basis.
-- **B1 leftovers** — Sallie Mae / Truist (re-identify the real ATS first); Best Egg ATS (not on
-  Lever/Greenhouse); Discover (401).
+- **Ashby + SmartRecruiters adapters** `[x]` (2026-09-10) — both public, both unauthenticated.
+  Ashby returns the JD and pay range in the list call (no detail fetch); SmartRecruiters filters by
+  `country=us` server-side. 15 new sources.
+- **ATS sweep** `[x]` (2026-09-10) — grepping careers pages for ATS hostnames found S&P Global
+  (`spgi/wd5/spgi_careers`), Nasdaq (`nasdaq/wd1/global_external_site`) and Guardian Life
+  (`guardianlife/wd5/guardian-life-careers`) — all health-check green.
+- **B1 leftovers — still unresolved, with dead ends now recorded:**
+  - *Sallie Mae*: careers page points at `sallie-mae.wd5.myworkdayjobs.com/careers` and that page
+    returns 200, but every CXS combination tried returns 422 (`sallie-mae`/`salliemae` x
+    `careers`/`Careers`/`SallieMae_Careers`/`External`). The CXS tenant id evidently differs from the
+    subdomain; needs the id from the site's own network calls.
+  - *Best Egg*: careers page links to `jobs.lever.co/bestegg`, but both that board and the Lever API
+    return 404 — a stale link. They have moved ATS; re-identify before adding.
+  - *Truist* / *Discover* (401) — unchanged.
 - **Comcast** `[x]` (2026-09-10) — wd5 started returning HTTP 410; the tenant moved to wd115. Source had
   been silently dead. `npm run check` catches this class of failure — worth running periodically.
 - **findSalary grant figures** `[x]` (2026-09-10) — university/research JDs cite funding ("a 5-year,

@@ -5,6 +5,11 @@ import { fetchLever } from "./adapters/lever";
 import { fetchIcims } from "./adapters/icims";
 import { fetchOracle, fetchOracleDetail } from "./adapters/oracle";
 import { fetchPageUp, fetchPageUpDetail, closePageUpBrowser } from "./adapters/pageup";
+import { fetchAshby } from "./adapters/ashby";
+import {
+  fetchSmartRecruiters,
+  fetchSmartRecruitersDetail,
+} from "./adapters/smartrecruiters";
 import { matches, locationAllowed, locationBlocked } from "./match";
 import { classifySponsorship, findSalary } from "./sponsorship";
 import { detectRemote } from "./remote";
@@ -74,6 +79,8 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "lever") return fetchLever(c);
   if (c.ats === "icims") return fetchIcims(c);
   if (c.ats === "pageup") return fetchPageUp(c);
+  if (c.ats === "ashby") return fetchAshby(c);
+  if (c.ats === "smartrecruiters") return fetchSmartRecruiters(c);
   return [];
 }
 
@@ -110,6 +117,7 @@ async function enrich(p: Posting): Promise<void> {
     else if (p.oracleDetail) detail = await fetchOracleDetail(p.oracleDetail);
     else if (p.detailApi) detail = await fetchGreenhouseDetail(p.detailApi);
     else if (p.pageupDetail) detail = await fetchPageUpDetail(p.pageupDetail);
+    else if (p.srDetail) detail = await fetchSmartRecruitersDetail(p.srDetail);
     if (!detail) return;
 
     const { description, locations } = detail;

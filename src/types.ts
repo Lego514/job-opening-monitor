@@ -1,4 +1,12 @@
-export type Ats = "workday" | "greenhouse" | "lever" | "icims" | "oracle" | "pageup";
+export type Ats =
+  | "workday"
+  | "greenhouse"
+  | "lever"
+  | "icims"
+  | "oracle"
+  | "pageup"
+  | "ashby"
+  | "smartrecruiters";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -20,6 +28,10 @@ export interface CompanySource {
   oracleSite?: string; // CE site number, e.g. "CX_1001"
   // PageUp (e.g. University of Delaware) — full listing URL; needs a browser:
   pageupUrl?: string; // e.g. "https://careers.udel.edu/en-us/listing/"
+  // Ashby:
+  ashbyToken?: string; // job board name, e.g. "ramp"
+  // SmartRecruiters:
+  srCompany?: string; // company identifier, e.g. "Experian"
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;
@@ -45,6 +57,7 @@ export interface Posting {
   detailApi?: string; // adapter-specific detail endpoint (Greenhouse), for enrichment
   oracleDetail?: string; // Oracle CE detail endpoint, for enrichment
   pageupDetail?: string; // PageUp job page URL, for enrichment (browser fetch)
+  srDetail?: string; // SmartRecruiters detail endpoint, for enrichment
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
   capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
 }
