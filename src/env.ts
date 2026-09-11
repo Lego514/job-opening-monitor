@@ -35,6 +35,15 @@ export function checkEnv(env: NodeJS.ProcessEnv, mode: RunMode): EnvCheck {
   const missing = REQUIRED[mode].filter((k) => !env[k]);
   const degraded: string[] = [];
 
+  // The LLM stage is an enhancement, never a requirement: with no key the run
+  // still fetches, matches and alerts on the regex path exactly as it did
+  // before. It is normally unset locally and set as a repo secret in CI, so
+  // saying so out loud is what separates "working as designed" from a silent
+  // downgrade. A seed run alerts on nothing, so it never classifies.
+  if ((mode === "live" || mode === "dry-run") && !env.ANTHROPIC_API_KEY) {
+    degraded.push("ANTHROPIC_API_KEY — LLM classification off, regex fallback");
+  }
+
   if (mode === "live") {
     if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — matches won't be added to the tracker");
     if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) degraded.push("TELEGRAM_BOT_TOKEN/CHAT_ID — no Telegram alerts");

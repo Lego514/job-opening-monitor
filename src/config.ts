@@ -196,9 +196,17 @@ export interface MatchFilters {
 }
 
 // Tune these to taste — all one-line edits.
+//
+// Since the LLM stage (src/llm.ts) landed, this is a WIDE pre-filter, not the
+// filter. Its only job is to get plausible roles in front of Claude cheaply;
+// Claude then decides what is actually open to a new MS grad. So the seniority
+// excludes are gone — they were killing Capital One's "Senior Associate", bank
+// "Associate" and similar early-career tiers — and the include list now covers
+// the names employers give new-grad roles: programs, rotations, "Graduate",
+// "Applied Scientist", "2027 Analyst Program".
 export const FILTERS: MatchFilters = {
-  // MS-CS targets first (software/data engineering, ML), analyst kept as a fallback.
   includeKeywords: [
+    // MS-CS core.
     "software engineer",
     "software developer",
     "data engineer",
@@ -215,10 +223,38 @@ export const FILTERS: MatchFilters = {
     "quantitative analyst",
     "risk analyst",
     "credit analyst",
+    // Wide net for the new-grad titles no keyword list can enumerate.
+    // "engineer" and "scientist" are bare on purpose: the non-software
+    // disciplines they drag in are cut by the excludes below, so the LLM never
+    // pays to reject them.
+    "engineer",
+    "developer",
+    "analyst",
+    "analytics",
+    "scientist",
+    "researcher",
+    "associate",
+    "graduate",
+    "program",
+    "rotational",
+    "early career",
+    "new grad",
+    "university",
+    "technologist",
   ],
-  // Whole-word excludes. Note: Capital One's "Senior Associate" is actually an
-  // early-career tier — remove "senior" here if you want those through.
-  excludeKeywords: ["senior", "sr", "principal", "director", "manager", "lead", "staff", "vp", "head", "architect"],
+  // Whole-word excludes, now only two kinds:
+  //  1. unmistakably executive titles — no JD makes these a new-grad fit;
+  //  2. the disciplines the wide includes drag in. Non-software engineering
+  //     (DuPont/Corteva/Solenis/Bosch are full of it) and clinical roles
+  //     (ChristianaCare/Nemours) are far cheaper to cut with a regex than to
+  //     pay Claude to reject a few hundred of them a day.
+  excludeKeywords: [
+    "principal", "director", "vp", "head", "chief", "president", "svp", "evp",
+    "mechanical", "chemical", "civil", "electrical", "industrial", "manufacturing",
+    "structural", "hvac", "maintenance", "packaging", "polymer", "plant",
+    "facilities", "aerospace", "automotive", "technician", "machinist", "welder",
+    "rn", "nurse", "nursing", "physician", "pharmacist", "therapist", "dental",
+  ],
   // ALL US: empty allow-list = accept anything not blocked below (max first-job
   // reach). To re-narrow to Delaware, set this back to
   // ["delaware","wilmington","newark","philadelphia","remote"].
@@ -262,6 +298,10 @@ export const LOCAL_FILTERS: MatchFilters = {
     "software engineer", "software developer", "developer", "data engineer",
     "data scientist", "machine learning", "analyst", "analytics",
     "business intelligence", "reporting", "insights",
+    // Same new-grad vocabulary as FILTERS — DE is the top-choice location, so it
+    // must never be the narrower of the two nets.
+    "associate", "graduate", "program", "rotational", "early career", "new grad",
+    "researcher", "scientist", "technologist",
   ],
   // Exclude executive titles (Senior/Lead/Manager/etc. are allowed for DE) and
   // clinical roles — the DE net is wide enough to pull hospital jobs from

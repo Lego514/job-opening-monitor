@@ -13,9 +13,11 @@ being among the first applicants matters when you're job hunting on an OPT clock
 config (companies + filters)
    → adapters (Workday/Greenhouse/Lever/    extract
      Oracle CE APIs + PageUp via browser)
-   → match (keywords + location)            filter
+   → match (wide keyword + location net)    pre-filter
    → JD scan (sponsorship + salary)         enrich
    → diff vs. seen (Supabase)               dedup
+   → LLM screen (Claude Haiku 4.5,          classify
+     cached in Supabase, new roles only)
    → Telegram + email + tracker row         load
 ```
 
@@ -98,6 +100,8 @@ config (companies + filters)
   (Greenhouse) plus American Express and BNY (Oracle CE).
 - **Remote-eligibility detection** — scans the JD for role-level remote phrasing, so a role tagged to an
   HQ city but actually remote still surfaces; foreign regions ("Remote, India", UK, …) are blocked.
+- **LLM screening** — the keyword filter is now a deliberately *wide* pre-filter; Claude is the real
+  filter. See [the section below](#the-llm-screen).
 - **Role focus** — tuned for an MS-CS new grad on STEM OPT: software/data engineering and ML first, with
   data/business analyst as a fallback (see `includeKeywords` in [`src/config.ts`](src/config.ts)).
 - **Geography: all US** by default (`allowLocations: []` → US-positive matching by state/abbrev/US/remote;
@@ -113,7 +117,8 @@ config (companies + filters)
 - **Real-location resolution** — the listing endpoint returns opaque "2 Locations" labels; the detail fetch
   resolves the actual cities and the location filter is re-applied, so out-of-area multi-location roles
   (e.g. Richmond/McLean VA) are correctly dropped instead of slipping through.
-- **Zero runtime dependencies** — native `fetch` for the ATS, Telegram, Resend, and Supabase REST. (No
+- **Two runtime dependencies** — Playwright (for the one WAF-guarded source) and the Anthropic SDK.
+  Everything else is native `fetch`: ATS, Telegram, Resend, and Supabase REST. (Explicitly no
   `supabase-js`: its client eagerly opens a realtime WebSocket that breaks under Node 20.)
 - **Dedup** is a Supabase table (`monitor_seen_jobs`) so you never get the same alert twice. Within a
   run there are two axes: the `company:id` key, and the **normalized application URL**
@@ -124,8 +129,72 @@ config (companies + filters)
   **Known residual:** Zapply publishes `zapply.jobs/l/d/…` redirect links rather than the employer's
   ATS URL, so its rows can't be collapsed this way — 3 of 536 matches in the verification dry run were
   such duplicates (0.6%). SimplifyJobs publishes real ATS URLs and collapses correctly.
-- Pure logic (matching, sponsorship classification, remote detection, normalization, ranking) is
-  unit-tested with Vitest (123 tests), with defensive guards against malformed API records.
+- Pure logic (matching, prompt building, verdict parsing, sponsorship classification, remote detection,
+  normalization, ranking) is unit-tested with Vitest (117 tests) — the API is mocked, so `npm test` makes
+  no network calls — with defensive guards against malformed API records and malformed model output.
+
+## The LLM screen
+
+Three problems the regex pipeline could not solve, all of them the same problem: a title is not a role.
+
+1. **New-grad roles were invisible.** `includeKeywords` needed substrings like "software engineer", so
+   "Technology Development Program", "Early Career Rotational Program", "Graduate Engineer", "Applied
+   Scientist", "Analytics Associate" and "2027 Analyst Program" never matched — exactly the roles a new
+   grad should be applying to.
+2. **The seniority excludes killed entry-level roles.** `senior`/`lead`/`staff` as whole-word excludes
+   dropped Capital One's "Senior Associate" and bank "Associate" titles, which are early-career tiers.
+3. **Sponsorship was "unknown" for ~80% of matches.** The regex only catches explicit *disqualifiers*;
+   everything else came back "unknown", which meant reading every JD by hand.
+
+So the filter moved. `FILTERS` in [`src/config.ts`](src/config.ts) is now a **wide pre-filter** — it adds
+`engineer`, `analyst`, `scientist`, `researcher`, `associate`, `graduate`, `program`, `rotational`,
+`early career`, `new grad`, `university`, and drops every seniority exclude (keeping only executive
+titles, plus non-software engineering and clinical disciplines, which are cheaper to cut with a regex
+than to pay a model to reject). [`src/llm.ts`](src/llm.ts) then sends title + location + JD to
+**Claude Haiku 4.5** and gets back structured JSON via a strict tool call:
+
+| field | values |
+|---|---|
+| `newGradFit` | `yes` / `maybe` / `no` — realistically open to a new MS grad with 0–2 yrs |
+| `seniority` | `intern` / `new-grad` / `entry` / `mid` / `senior` / `exec` |
+| `roleFamily` | `data-analyst` / `data-engineer` / `swe` / `ml` / `analyst-other` / `other` |
+| `sponsorship` | `will-sponsor` / `no-sponsorship` / `silent`, with a short JD quote |
+| `remoteUS` | boolean |
+| `summary` | ≤20 words, shown in the alert |
+
+Roles the model marks `newGradFit: no` or `seniority` ≥ mid are dropped from alerts; the rest carry the
+verdict into the Telegram/email meta line, and a `no-sponsorship` verdict sets the same `⛔` flag the
+regex classifier sets. The LLM can only ever *add* a sponsorship flag — a regex-flagged role stays
+flagged.
+
+### Cost
+
+Four things keep this well under **$1/day**:
+
+- **Only new postings are classified.** The stage runs *after* the diff against `seen`, so the ~280
+  roles that match every run cost nothing; only the 15–50 genuinely new ones are sent.
+- **Verdicts are cached in Supabase** (`monitor_llm_verdicts`, see
+  [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql)) keyed by posting key, so re-runs,
+  seeds, and roles that drop off a board and return are free.
+- **The JD is truncated** to ~4k characters — seniority and sponsorship language lives near the top.
+- **Hard ceilings**: `LLM_MAX_PER_RUN` (default 80) and `LLM_DRY_RUN_MAX` (default 15, since a dry run
+  has no cache to amortize against).
+
+At Haiku 4.5 rates ($1/MTok in, $5/MTok out) and ~1.2k in / ~120 out tokens per role, that is about
+**$0.0018 per role**. Every run prints its own spend: `[llm] classified N postings, ~$X …`.
+
+### Without a key
+
+`ANTHROPIC_API_KEY` is a GitHub repo secret and is normally *not* set locally. With no key the stage
+no-ops entirely and the run behaves exactly as it did before, announcing itself through the existing
+`checkEnv` degraded mechanism:
+
+```
+[env] ANTHROPIC_API_KEY — LLM classification off, regex fallback
+```
+
+The same fallback covers an API outage: classification is per-posting `try`/`catch` behind a bounded
+worker pool with a timeout and retries on 429/529, and a posting with no verdict stays in the alert set.
 
 ## Run it
 
@@ -143,17 +212,20 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 - `npm start -- --seed` — record everything currently open as "seen" without alerting. Run once after
   setup so your first real run only surfaces genuinely new roles.
 - `SKIP_NO_SPONSORSHIP=true` — don't alert/add roles the JD flags as no-sponsorship (still recorded as seen).
+- `LLM_MAX_PER_RUN` / `LLM_DRY_RUN_MAX` — ceilings on Claude calls per run (default **80** / **15**).
 - `MAX_AGE_DAYS` — only consider roles posted within N days (default **14**; applied *before* the JD-detail
   fetches so the all-US volume stays cheap). Set higher for a one-time broad sweep.
 - Edit keyword / location / exclude lists and the company list in [`src/config.ts`](src/config.ts).
 
 ## Going live
 
-1. **State table:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql) in your Supabase SQL editor.
+1. **State tables:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql) and
+   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql) in your Supabase SQL editor.
 2. **Secrets:** copy `.env.example` → `.env` and fill in (or set as GitHub repo secrets):
    - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only — never commit), `TRACKER_USER_ID`
    - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (from @BotFather / @userinfobot)
    - `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM` (optional email channel)
+   - `ANTHROPIC_API_KEY` (optional — enables the LLM screen; without it the run falls back to regex)
 3. **Run:** `node --env-file=.env node_modules/.bin/tsx src/index.ts` locally, or push and let
    [`.github/workflows/monitor.yml`](.github/workflows/monitor.yml) run it every ~15 min.
 

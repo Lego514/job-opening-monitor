@@ -6,16 +6,12 @@ function hasWord(text: string, word: string): boolean {
   return new RegExp(`\\b${escaped}\\b`, "i").test(text);
 }
 
+// Seniority words (senior/sr/lead/staff/manager) are no longer excluded at all:
+// they were dropping genuine early-career tiers like Capital One's "Senior
+// Associate", and the LLM stage now reads the JD and judges the real seniority.
+// What's left here is executive titles and wrong-discipline words.
 function isExcluded(title: string, excludeKeywords: string[]): boolean {
-  return excludeKeywords.some((k) => {
-    // "Senior/Sr Associate" is an early-career tier at some employers (e.g. Capital
-    // One), so don't let the "senior"/"sr" excludes knock it out.
-    const key = k.toLowerCase();
-    if ((key === "senior" || key === "sr") && /\b(?:senior|sr\.?)\s+associate\b/.test(title)) {
-      return false;
-    }
-    return hasWord(title, k);
-  });
+  return excludeKeywords.some((k) => hasWord(title, k));
 }
 
 /** True if the location names a blocked (e.g. foreign) region. */
@@ -62,7 +58,7 @@ export function locationAllowed(location: string, allow: string[]): boolean {
 /**
  * Pure predicate: does this posting match the configured filters?
  * - title contains an include keyword (substring, case-insensitive), AND
- * - title contains no exclude keyword (whole-word, e.g. "lead" won't hit "leadership"), AND
+ * - title contains no exclude keyword (whole-word, e.g. "head" won't hit "headcount"), AND
  * - location is allowed (matches an allowed term, or is unknown/multi-location).
  */
 export function matches(p: Posting, filters: MatchFilters = FILTERS): boolean {

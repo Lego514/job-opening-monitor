@@ -61,6 +61,28 @@ export interface CompanySource {
   capExempt?: boolean;
 }
 
+/**
+ * What the LLM classification stage (src/llm.ts) reads out of a JD. The regex
+ * pipeline answers "does the title look plausible?"; this answers the questions
+ * a regex can't — is the role actually open to a new MS grad, and does the JD
+ * say anything at all about sponsorship (it usually doesn't say "no", it just
+ * stays silent, which the regex classifier can only report as "unknown").
+ */
+export type NewGradFit = "yes" | "maybe" | "no";
+export type Seniority = "intern" | "new-grad" | "entry" | "mid" | "senior" | "exec";
+export type RoleFamily = "data-analyst" | "data-engineer" | "swe" | "ml" | "analyst-other" | "other";
+export type LlmSponsorship = "will-sponsor" | "no-sponsorship" | "silent";
+
+export interface LlmVerdict {
+  newGradFit: NewGradFit; // realistically open to a new MS grad with ~0–2 yrs experience
+  seniority: Seniority;
+  roleFamily: RoleFamily;
+  sponsorship: LlmSponsorship;
+  sponsorshipReason?: string; // short quote from the JD backing the call
+  remoteUS: boolean;
+  summary: string; // ≤20 words
+}
+
 /** A normalized job posting from any ATS adapter. */
 export interface Posting {
   id: string; // stable id within a company (req id, or path fallback)
@@ -81,6 +103,8 @@ export interface Posting {
   description?: string; // JD text already provided by the adapter (Lever) — skips a detail fetch
   capExempt?: boolean; // company is H-1B cap-exempt (copied from its CompanySource)
   via?: string; // aggregator this row came from (e.g. "SimplifyJobs list"); unset for direct ATS fetches
+  jdText?: string; // truncated JD kept after enrichment, as input for the LLM stage
+  llm?: LlmVerdict; // LLM classification, when the stage ran and succeeded for this role
 }
 
 /** Stable, company-namespaced key used for dedup + seen-state storage. */

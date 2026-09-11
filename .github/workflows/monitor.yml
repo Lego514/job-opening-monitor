@@ -28,11 +28,15 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+          # LLM classification (src/llm.ts). Unset = the run still works on the
+          # regex path and says so via the checkEnv degraded notice.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Optional behavior (set as repo Variables, not Secrets):
           SKIP_NO_SPONSORSHIP: ${{ vars.SKIP_NO_SPONSORSHIP }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
           MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
           WORKDAY_MAX_RESULTS: ${{ vars.WORKDAY_MAX_RESULTS }}
+          LLM_MAX_PER_RUN: ${{ vars.LLM_MAX_PER_RUN }}
 
       # The monitor needs monitoring: a crashing cron is otherwise invisible
       # until you notice the alerts stopped. (This is exactly what happened

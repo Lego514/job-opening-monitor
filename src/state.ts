@@ -1,4 +1,4 @@
-import { type Posting, postingKey } from "./types";
+import { type LlmVerdict, type Posting, postingKey } from "./types";
 
 // Seen-job state lives in Supabase table `monitor_seen_jobs` (see
 // supabase/0002_monitor.sql). Uses the REST API with the service_role key
@@ -52,5 +52,60 @@ export async function markSeen(postings: Posting[]): Promise<void> {
   });
   if (!res.ok && res.status !== 409) {
     throw new Error(`markSeen HTTP ${res.status}: ${await res.text()}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LLM verdict cache (`monitor_llm_verdicts`, see supabase/0003_llm_verdicts.sql).
+// Every cached row is a Claude call that doesn't have to be paid for again.
+
+/**
+ * Fetch cached verdicts for the given posting keys.
+ *
+ * Queried by key rather than loaded whole: unlike `seen`, this table carries a
+ * JSON blob per row, and a run only ever needs verdicts for the handful of
+ * postings it is about to classify. Keys are chunked because they travel in the
+ * URL, and quoted because a company name or req id may contain a comma.
+ *
+ * A cache read is an optimization, never a requirement — a failure here is
+ * logged and the run pays for those classifications instead of dying.
+ */
+export async function loadLlmVerdicts(keys: string[]): Promise<Map<string, LlmVerdict>> {
+  const out = new Map<string, LlmVerdict>();
+  const CHUNK = 50;
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    const chunk = keys.slice(i, i + CHUNK);
+    const list = chunk.map((k) => `"${k.replace(/"/g, '\\"')}"`).join(",");
+    const url = `${restBase()}/monitor_llm_verdicts?select=id,verdict&id=in.(${encodeURIComponent(list)})`;
+    try {
+      const res = await fetch(url, { headers: sbHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const rows = (await res.json()) as { id: string; verdict: LlmVerdict }[];
+      for (const r of rows) if (r.verdict) out.set(r.id, r.verdict);
+    } catch (e) {
+      console.error(`[llm] verdict cache read failed: ${(e as Error).message}`);
+      return out; // partial cache is still worth using; the rest just get classified
+    }
+  }
+  return out;
+}
+
+/** Persist newly-obtained verdicts (idempotent — an existing key is replaced). */
+export async function saveLlmVerdicts(
+  verdicts: Map<string, LlmVerdict>,
+  model: string,
+): Promise<void> {
+  if (verdicts.size === 0) return;
+  const rows = [...verdicts].map(([id, verdict]) => ({ id, verdict, model }));
+  try {
+    const res = await fetch(`${restBase()}/monitor_llm_verdicts`, {
+      method: "POST",
+      headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(rows),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+  } catch (e) {
+    // Losing the cache write costs money next run, not correctness — never fatal.
+    console.error(`[llm] verdict cache write failed: ${(e as Error).message}`);
   }
 }

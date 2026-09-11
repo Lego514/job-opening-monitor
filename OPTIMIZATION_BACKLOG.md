@@ -51,6 +51,41 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
 - **E2** Email (Resend) channel unconfigured — Telegram deemed sufficient.
 - **E4** Consider night-time cron downshift (15 min daytime, hourly overnight).
 
+## F. LLM classification (2026-09-11)
+
+- **F1** `[x]` **Title keyword filter missed new-grad roles.** `includeKeywords` required substrings like
+  "software engineer"/"data analyst", so "Technology Development Program", "Early Career Rotational
+  Program", "Graduate Engineer", "Quantitative Researcher", "Applied Scientist", "Solutions Engineer",
+  "Analytics Associate", "2027 Analyst Program" never matched. `FILTERS` is now a WIDE pre-filter
+  (`engineer`, `analyst`, `scientist`, `researcher`, `associate`, `graduate`, `program`, `rotational`,
+  `early career`, `new grad`, `university`, `technologist`); `LOCAL_FILTERS` got the same vocabulary so
+  the top-choice location is never the narrower net.
+- **F2** `[x]` **Exclude keywords killed entry-level roles.** `senior`/`sr`/`lead`/`staff`/`manager`/
+  `architect` are gone — they dropped Capital One "Senior Associate" and bank "Associate" tiers, and the
+  `senior associate` special case in `match.isExcluded` went with them. What remains is executive titles
+  (director/vp/head/chief/principal/president/svp/evp) plus wrong-discipline words (non-software
+  engineering, clinical) — those are noise the LLM would otherwise be billed to reject.
+- **F3** `[x]` **Sponsorship was "unknown" for ~80% of matches.** `src/llm.ts` sends title + location +
+  truncated JD to Claude Haiku 4.5 and gets structured JSON back via a strict tool call: `newGradFit`,
+  `seniority`, `roleFamily`, `sponsorship` (`will-sponsor`/`no-sponsorship`/`silent` + a JD quote),
+  `remoteUS`, `summary`. `silent` is now distinguishable from "we didn't look", which is the whole point.
+- **F4** `[x]` **Cost ceiling.** The stage sits AFTER the `seen` diff, so only genuinely new roles are
+  classified; verdicts are cached in `monitor_llm_verdicts` (migration `0003`) keyed by posting key; the
+  JD is truncated to ~4k chars; `LLM_MAX_PER_RUN` (80) and `LLM_DRY_RUN_MAX` (15) bound the worst case.
+  ~$0.0018/role.
+- **F5** `[x]` **Graceful degradation.** No `ANTHROPIC_API_KEY` (the normal local case) → `checkEnv`
+  reports it as degraded and the run takes the regex path unchanged. An API failure is caught per
+  posting; a role with no verdict is never dropped, only never promoted.
+- **F6** — *follow-up:* the verdict cache has no TTL or model-version invalidation. The `model` column is
+  recorded, but changing `LLM_MODEL` won't re-classify cached roles. Add a cache sweep if the prompt or
+  model changes materially.
+- **F7** — *follow-up:* no prompt caching. Haiku 4.5's minimum cacheable prefix (2048 tokens) is larger
+  than the system prompt, so a `cache_control` breakpoint would be a no-op today. Revisit if the system
+  prompt grows.
+- **F8** — *follow-up:* the widened pre-filter raises the number of enriched postings (more JD detail
+  fetches per run, which is wall-clock, not dollars). If runs get slow, tighten the discipline excludes
+  rather than re-adding seniority ones.
+
 ## Remaining / follow-ups
 
 - **JPMorgan Chase** `[x]` — new Oracle Cloud CE adapter (`adapters/oracle.ts`); polls sites CX_1001 + CX_1002 with pagination, enriches via the CE detail endpoint (sponsorship/salary/remote). Verified live: ~644 fetched, Wilmington/Newark DE roles (incl. Payment Lifecycle / Risk Reporting Analyst) surface with salary + sponsorship flags.

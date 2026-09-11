@@ -10,6 +10,7 @@ const FULL = {
   RESEND_API_KEY: "rk",
   ALERT_EMAIL_TO: "a@b.c",
   ALERT_EMAIL_FROM: "d@e.f",
+  ANTHROPIC_API_KEY: "sk-ant-test",
 };
 
 describe("checkEnv", () => {
@@ -24,7 +25,21 @@ describe("checkEnv", () => {
   });
 
   it("requires nothing for a dry run — it neither reads nor writes state", () => {
-    expect(checkEnv({}, "dry-run")).toEqual({ missing: [], degraded: [] });
+    expect(checkEnv(FULL, "dry-run")).toEqual({ missing: [], degraded: [] });
+    expect(checkEnv({}, "dry-run").missing).toEqual([]);
+  });
+
+  it("reports a missing Anthropic key as degraded, not fatal (regex fallback)", () => {
+    for (const mode of ["live", "dry-run"] as const) {
+      const { missing, degraded } = checkEnv({ ...FULL, ANTHROPIC_API_KEY: undefined }, mode);
+      expect(missing).toEqual([]);
+      expect(degraded).toContain("ANTHROPIC_API_KEY — LLM classification off, regex fallback");
+    }
+  });
+
+  it("does not mention the LLM on a seed run, which classifies nothing", () => {
+    const { degraded } = checkEnv({ SUPABASE_URL: "u", SUPABASE_SERVICE_ROLE_KEY: "k" }, "seed");
+    expect(degraded).toEqual([]);
   });
 
   it("requires state secrets for a seed run", () => {

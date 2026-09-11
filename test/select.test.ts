@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { selectAlertable } from "../src/select";
-import { type Posting } from "../src/types";
+import { selectAlertable, llmRejects } from "../src/select";
+import { type LlmVerdict, type Posting } from "../src/types";
 
 const mk = (id: string, sponsorship: "no" | "unknown", postedOn: string): Posting => ({
   id,
@@ -81,5 +81,61 @@ describe("selectAlertable — location tiers", () => {
       { skipNoSponsorship: false },
     );
     expect(out[0].id).toBe("capexempt");
+  });
+});
+
+describe("selectAlertable — LLM verdicts", () => {
+  const verdict = (over: Partial<LlmVerdict> = {}): LlmVerdict => ({
+    newGradFit: "yes",
+    seniority: "new-grad",
+    roleFamily: "data-analyst",
+    sponsorship: "silent",
+    remoteUS: false,
+    summary: "",
+    ...over,
+  });
+  const withLlm = (id: string, over: Partial<LlmVerdict> = {}): Posting => ({
+    id,
+    company: "C",
+    title: id,
+    location: "Remote",
+    url: "u",
+    postedOn: "Posted Today",
+    sponsorship: "unknown",
+    llm: verdict(over),
+  });
+
+  it("keeps a role with no verdict — the LLM never silently swallows one it didn't see", () => {
+    const unseen: Posting = { id: "unseen", company: "C", title: "t", location: "Remote", url: "u", postedOn: "" };
+    expect(llmRejects(unseen)).toBe(false);
+    expect(selectAlertable([unseen], { skipNoSponsorship: false })).toHaveLength(1);
+  });
+
+  it("rejects newGradFit:no and anything mid or above", () => {
+    expect(llmRejects(withLlm("x", { newGradFit: "no" }))).toBe(true);
+    expect(llmRejects(withLlm("x", { seniority: "mid" }))).toBe(true);
+    expect(llmRejects(withLlm("x", { seniority: "senior" }))).toBe(true);
+    expect(llmRejects(withLlm("x", { seniority: "exec" }))).toBe(true);
+    expect(llmRejects(withLlm("x", { newGradFit: "maybe" }))).toBe(false);
+    expect(llmRejects(withLlm("x", { seniority: "entry" }))).toBe(false);
+    expect(llmRejects(withLlm("x", { seniority: "intern" }))).toBe(false);
+  });
+
+  it("drops rejected roles from the alert set by default", () => {
+    const out = selectAlertable(
+      [withLlm("fit"), withLlm("too-senior", { seniority: "senior" }), withLlm("no-fit", { newGradFit: "no" })],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["fit"]);
+  });
+
+  it("sorts rejects to the bottom, alongside no-sponsorship, when kept", () => {
+    const de = { ...withLlm("de-reject", { newGradFit: "no" }), location: "Wilmington, DE" };
+    const out = selectAlertable([de, withLlm("remote-fit")], {
+      skipNoSponsorship: false,
+      skipLlmReject: false,
+    });
+    // DE-local would normally win; a dead end never leads.
+    expect(out.map((p) => p.id)).toEqual(["remote-fit", "de-reject"]);
   });
 });

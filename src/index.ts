@@ -15,7 +15,8 @@ import {
 import { matches, locationAllowed, locationBlocked } from "./match";
 import { classifySponsorship, findSalary } from "./sponsorship";
 import { detectRemote } from "./remote";
-import { loadSeenKeys, markSeen } from "./state";
+import { loadSeenKeys, markSeen, loadLlmVerdicts, saveLlmVerdicts } from "./state";
+import { classifyAll, llmEnabled, LLM_MODEL } from "./llm";
 import { addToTracker } from "./tracker";
 import { sendTelegram } from "./notify/telegram";
 import { sendEmail } from "./notify/email";
@@ -41,6 +42,11 @@ const MAX_AGE_DAYS = intEnv("MAX_AGE_DAYS", 14);
 // Cap how many roles a single run pushes to Telegram/email (the tracker still
 // gets them all) so a backlog can't blast a wall of messages.
 const MAX_ALERTS_PER_RUN = intEnv("MAX_ALERTS_PER_RUN", 30);
+// Hard ceilings on LLM spend. A live run only classifies postings that are NEW
+// and not already cached, so this bites only on an abnormal day; a dry run has
+// no Supabase cache to lean on, so it stays deliberately tiny.
+const LLM_MAX_PER_RUN = intEnv("LLM_MAX_PER_RUN", 80);
+const LLM_DRY_RUN_MAX = intEnv("LLM_DRY_RUN_MAX", 15);
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c);
@@ -146,6 +152,10 @@ async function enrich(p: Posting): Promise<void> {
     p.sponsorshipReason = cls.reason;
     p.salary = findSalary(description);
     p.remote = detectRemote(description);
+    // Keep a bounded slice of the JD for the LLM stage, so classification never
+    // has to re-fetch the detail page it already paid for. Seniority and
+    // sponsorship language lives near the top; the tail is benefits boilerplate.
+    p.jdText = description.slice(0, 6000);
     // Resolve the listing's opaque "N Locations" to the real cities.
     if (locations.length) p.location = locations.join(" · ");
   } catch (e) {
@@ -162,7 +172,16 @@ async function enrichAll(posts: Posting[], concurrency = 8): Promise<void> {
   await Promise.all(Array.from({ length: Math.min(concurrency, posts.length) }, worker));
 }
 
+// How the LLM's new-grad verdict reads in an alert. "yes" is the expected case
+// once rejects are filtered out, so it gets no badge — only a hedge is worth
+// the line space.
+const FIT_BADGE: Record<string, string> = {
+  maybe: "🤔 maybe a fit",
+  no: "🚫 not a new-grad fit",
+};
+
 function metaLine(p: Posting): string {
+  const v = p.llm;
   return [
     p.capExempt ? "✅ cap-exempt — no H-1B lottery" : null,
     p.via ? `via ${p.via}` : null,
@@ -173,6 +192,11 @@ function metaLine(p: Posting): string {
     p.sponsorship === "no"
       ? `⛔ no sponsorship${p.sponsorshipReason ? ` — ${p.sponsorshipReason}` : ""}`
       : null,
+    // The LLM's read of the JD — the part that saves actually opening it.
+    v?.sponsorship === "will-sponsor" ? "🛂 mentions sponsorship" : null,
+    v ? FIT_BADGE[v.newGradFit] ?? null : null,
+    v ? `🎓 ${v.seniority} · ${v.roleFamily}` : null,
+    v?.summary ? `📝 ${v.summary}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -212,6 +236,24 @@ function emailHtml(list: Posting[], extra = 0): string {
   return `<p>${list.length + extra} new role(s) matched — ${breakdown(list)}:</p><ul>${items}</ul>${more}`;
 }
 
+/**
+ * Run the LLM classification stage over `posts`, attaching verdicts in place.
+ *
+ * No-ops entirely without an API key — that is the regex-only fallback path, and
+ * it is the normal local configuration. `useCache` is off for a dry run, which
+ * has no Supabase credentials at all.
+ */
+async function classifyStage(posts: Posting[], max: number, useCache: boolean): Promise<void> {
+  if (!llmEnabled() || posts.length === 0) return;
+  const cache = useCache ? await loadLlmVerdicts(posts.map(postingKey)) : undefined;
+  const r = await classifyAll(posts, { cache, max });
+  if (useCache) await saveLlmVerdicts(r.fresh, LLM_MODEL);
+  console.log(
+    `[llm] classified ${r.classified} postings, ~$${r.costUsd.toFixed(4)} ` +
+      `(${r.cached} from cache, ${r.failed} failed) — ${LLM_MODEL}`,
+  );
+}
+
 async function main(): Promise<void> {
   // Check secrets BEFORE the expensive fetch — a missing one used to surface
   // only at the first Supabase call, ~3 minutes and every source later.
@@ -249,6 +291,11 @@ async function main(): Promise<void> {
   const opts = { skipNoSponsorship: SKIP_NO_SPONSORSHIP };
 
   if (DRY_RUN) {
+    // A dry run has no Supabase cache to amortize against, so classification is
+    // capped hard: rank first, spend on the top of the list only, then re-rank
+    // with the verdicts applied (unclassified roles pass through untouched).
+    const candidates = selectAlertable(matchedList, { ...opts, skipLlmReject: false });
+    await classifyStage(candidates.slice(0, LLM_DRY_RUN_MAX), LLM_DRY_RUN_MAX, false);
     const ranked = selectAlertable(matchedList, opts);
     for (const p of ranked) {
       const meta = metaLine(p);
@@ -268,6 +315,10 @@ async function main(): Promise<void> {
     console.log(`[seed] recorded ${fresh.length} current postings as seen; no alerts sent.`);
     return;
   }
+
+  // Classify only what's genuinely new — never the ~280 that match every run.
+  // Cached verdicts make a re-run or a reappearing role free.
+  await classifyStage(fresh, LLM_MAX_PER_RUN, true);
 
   const alertable = selectAlertable(fresh, opts);
   console.log(`[diff] ${fresh.length} new; ${alertable.length} to alert.`);
