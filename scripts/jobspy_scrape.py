@@ -74,13 +74,17 @@ LOCATIONS: list[tuple[str, bool]] = [
 
 def _env_int(name: str, default: int) -> int:
     try:
-        n = int(os.environ.get(name, ""))
+        n = int(os.environ.get(name) or "")
         return n if n > 0 else default
     except ValueError:
         return default
 
 
-SITES = [s.strip() for s in os.environ.get("JOBSPY_SITES", "indeed,zip_recruiter").split(",") if s.strip()]
+# NB: every read here is `or default`, never `get(name, default)`. An unset repo
+# Variable in GitHub Actions arrives as an env var set to the EMPTY STRING, not as
+# an absent one — which silently configured zero boards on the first CI run
+# ("[jobspy] 0 queries: 0 board(s)"). Empty means unset here.
+SITES = [s.strip() for s in (os.environ.get("JOBSPY_SITES") or "indeed,zip_recruiter").split(",") if s.strip()]
 HOURS_OLD = _env_int("JOBSPY_HOURS_OLD", 72)
 RESULTS_WANTED = _env_int("JOBSPY_RESULTS", 50)
 BUDGET_SEC = _env_int("JOBSPY_BUDGET_SEC", 150)

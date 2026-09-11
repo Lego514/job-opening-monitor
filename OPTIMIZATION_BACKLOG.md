@@ -397,6 +397,9 @@ reaches them; they have no board to add.
   read as "no jobs today".
 - **Prefer `job_url_direct`.** It is both the better apply link and the thing that lets `dedupe()`
   collapse an Indeed copy of a req we already have from the employer's own board.
+- **Empty string means unset.** An unset repo Variable in GitHub Actions is passed as an env var set to
+  `""`, not as an absent one, so `os.environ.get(name, default)` silently configured **zero boards** on
+  the first CI run (`[jobspy] 0 queries: 0 board(s)`). Every env read in the script is `or default`.
 - **Pin the library.** It tracks board HTML that changes without notice; an unpinned upgrade is exactly
   how a quiet 0-row run happens.
 - **Last in `COMPANIES`.** `dedupe()` keeps the first copy of a URL, so a direct adapter (which has a
