@@ -91,7 +91,9 @@ config (companies + filters)
     rows, 526 unique, in **7.3s**. **ZipRecruiter** answered every query with Cloudflare `403` then
     `429` — 0 rows, from a residential IP. It stays configured (it costs ~2s and the block may be
     IP- or day-specific), and the summary line says plainly when a board returns nothing from every
-    query. **LinkedIn is off by default** — it rate-limits hard without residential proxies; enable it
+    query. **On the GitHub runner the picture is the same, not worse**: Indeed 25/25 queries, 1,013 rows
+    → 557 unique in **9.4s**; ZipRecruiter 0. That was the open question — datacenter IPs are blocked
+    more readily than home ones — and for Indeed the answer today is no. **LinkedIn is off by default** — it rate-limits hard without residential proxies; enable it
     with the `JOBSPY_SITES` repo Variable if you ever have proxies.
   - Like the GitHub lists, one "source" is not one employer: every row names its own company and
     `Posting.via` carries the board ("Indeed"/"ZipRecruiter"). Rows arrive **with the full JD and a

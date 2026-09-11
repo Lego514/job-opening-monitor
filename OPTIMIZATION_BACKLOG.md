@@ -379,6 +379,9 @@ reaches them; they have no board to add.
 ### Measured (2026-09-11)
 - **Local (residential IP):** Indeed 25/25 queries, 1,006 rows → 526 unique, **7.3s** total. ZipRecruiter
   Cloudflare `403` then `429` on every query, **0 rows**. LinkedIn not attempted (see below).
+- **On the GitHub runner** (run 34645894976): Indeed 25/25 queries, 1,013 rows → 557 unique, **9.4s**;
+  ZipRecruiter 0, same block. `[fetch] JobSpy: 557` → `[match] 3002 matched … of 22733 fetched` →
+  `[done] alerted 19/19`. The datacenter-IP worry did not materialize for Indeed.
 - The 526 rows carried a `job_url_direct` (the employer's real ATS link) on **100%** of rows and a JD on
   **100%**; 353 carried a structured pay range; 29 were Delaware-local.
 
