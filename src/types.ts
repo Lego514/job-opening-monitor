@@ -1,3 +1,5 @@
+import type { SponsorHistory } from "./sponsors";
+
 export type Ats =
   | "workday"
   | "greenhouse"
@@ -105,6 +107,10 @@ export interface Posting {
   via?: string; // aggregator this row came from (e.g. "SimplifyJobs list"); unset for direct ATS fetches
   jdText?: string; // truncated JD kept after enrichment, as input for the LLM stage
   llm?: LlmVerdict; // LLM classification, when the stage ran and succeeded for this role
+  // What US government H-1B filings say about this employer (src/sponsors.ts).
+  // Attached to alertable postings only — the lookup is free, but there is no
+  // point computing it for the ~2500 roles that never reach an alert.
+  sponsorHistory?: SponsorHistory;
 }
 
 /** Stable, company-namespaced key used for dedup + seen-state storage. */

@@ -1,0 +1,51 @@
+name: Sponsor data refresh
+
+# Rebuilds data/sponsors.json from the USCIS H-1B Employer Data Hub and commits
+# it if anything changed. Deliberately its OWN workflow: the ~10 MB of CSV must
+# never be downloaded inside the ~15-minute monitor run.
+#
+# USCIS publishes one export per fiscal year, so most months this is a no-op and
+# exits without a commit. Monthly (not daily) because that is the finest cadence
+# the upstream data can reward — and the occasional commit doubles as the push
+# that keeps GitHub from disabling the monitor's own schedule after 60 idle days.
+
+on:
+  schedule:
+    - cron: "17 6 1 * *" # 06:17 UTC on the 1st of each month
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:sponsors
+      - name: Sanity-check the rebuilt index
+        # A truncated download or a changed CSV layout would silently produce a
+        # tiny index; better to fail loudly than to commit a gutted one.
+        run: |
+          node -e '
+            const f = JSON.parse(require("fs").readFileSync("data/sponsors.json", "utf8"));
+            if (f.employers.length < 20000) throw new Error(`only ${f.employers.length} employers — refusing to commit`);
+            console.log(`ok: ${f.employers.length} employers, FY ${f.fiscalYears.join("/")}`);
+          '
+      - run: npm test
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- data/sponsors.json; then
+            echo "No change — USCIS has not published a new fiscal year."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/sponsors.json
+          git commit -m "Refresh USCIS H-1B sponsor index"
+          git push

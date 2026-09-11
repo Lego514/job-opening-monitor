@@ -12,7 +12,8 @@
     "check": "tsx scripts/check-sources.ts",
     "keywords": "tsx scripts/keywords.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:sponsors": "tsx scripts/build-sponsor-index.ts"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

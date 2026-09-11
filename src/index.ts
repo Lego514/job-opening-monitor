@@ -24,6 +24,7 @@ import { selectAlertable } from "./select";
 import { postedDays } from "./recency";
 import { normalizedUrlKey } from "./urlkey";
 import { isDelaware, h1bWageHint } from "./rank";
+import { loadSponsorIndex, matchSponsor, sponsorLine, type SponsorHistory } from "./sponsors";
 import { checkEnv, missingEnvMessage, type RunMode } from "./env";
 import { type CompanySource, type Posting, postingKey } from "./types";
 
@@ -188,6 +189,7 @@ function metaLine(p: Posting): string {
     p.remote ? "🏠 remote-eligible" : null,
     p.salary ? `💲${p.salary}` : null,
     h1bWageHint(p.salary),
+    sponsorLine(p.sponsorHistory, p.company, p.capExempt),
     p.postedOn || null,
     p.sponsorship === "no"
       ? `⛔ no sponsorship${p.sponsorshipReason ? ` — ${p.sponsorshipReason}` : ""}`
@@ -200,6 +202,43 @@ function metaLine(p: Posting): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/**
+ * Attach each posting's employer H-1B filing history from `data/sponsors.json`.
+ *
+ * Runs BEFORE `selectAlertable`, because the ordering uses it. Results are
+ * memoized per company name — a run routinely carries dozens of roles from the
+ * same employer, and the fuzzy pass is the only non-trivial work here. A missing
+ * index is a no-op: every posting keeps `sponsorHistory` undefined and the alert
+ * looks exactly as it did before this feature existed.
+ */
+function attachSponsorHistory(posts: Posting[]): void {
+  const index = loadSponsorIndex();
+  if (!index) return;
+  const byCompany = new Map<string, SponsorHistory>();
+  for (const p of posts) {
+    let h = byCompany.get(p.company);
+    if (!h) {
+      h = matchSponsor(index, p.company);
+      byCompany.set(p.company, h);
+    }
+    p.sponsorHistory = h;
+  }
+}
+
+/** `[sponsor]` log line: how much of this run's alert set the index could speak to. */
+function sponsorSummary(posts: Posting[]): string {
+  const seen = new Map<string, SponsorHistory | undefined>();
+  for (const p of posts) if (!seen.has(p.company)) seen.set(p.company, p.sponsorHistory);
+  const vals = [...seen.values()];
+  const matched = vals.filter((h) => h && h.confidence !== "none");
+  const fuzzy = matched.filter((h) => h?.confidence === "fuzzy").length;
+  const approvals = matched.reduce((n, h) => n + (h?.initialApprovals ?? 0), 0);
+  return (
+    `[sponsor] matched ${matched.length}/${vals.length} alertable employers ` +
+    `(${fuzzy} fuzzy, ${approvals.toLocaleString("en-US")} initial H-1B approvals in view).`
+  );
 }
 
 function breakdown(list: Posting[]): string {
@@ -294,6 +333,9 @@ async function main(): Promise<void> {
   );
 
   const opts = { skipNoSponsorship: SKIP_NO_SPONSORSHIP };
+  // Cross-reference every matched employer against USCIS H-1B filings. Cheap
+  // (one in-memory map lookup per distinct company) and needed before ranking.
+  attachSponsorHistory(matchedList);
 
   if (DRY_RUN) {
     // A dry run has no Supabase cache to amortize against, so classification is
@@ -306,6 +348,7 @@ async function main(): Promise<void> {
       const meta = metaLine(p);
       console.log(`  • [${p.company}] ${p.title} — ${p.location}${meta ? ` · ${meta}` : ""}\n    ${p.url}`);
     }
+    console.log(sponsorSummary(ranked));
     console.log(
       `[dry-run] ${ranked.length} would alert (skipNoSponsorship=${SKIP_NO_SPONSORSHIP}, maxAgeDays=${MAX_AGE_DAYS}).`,
     );
@@ -335,6 +378,7 @@ async function main(): Promise<void> {
   const considered = deferred.size ? fresh.filter((p) => !deferred.has(postingKey(p))) : fresh;
 
   const alertable = selectAlertable(considered, opts);
+  console.log(sponsorSummary(alertable));
   console.log(
     `[diff] ${fresh.length} new; ${alertable.length} to alert` +
       (deferred.size ? `; ${deferred.size} held for the next run` : "") + ".",

@@ -18,7 +18,9 @@ config (companies + filters)
    → diff vs. seen (Supabase)               dedup
    → LLM screen (Claude Haiku 4.5,          classify
      cached in Supabase, new roles only)
-   → Telegram + email + tracker row         load
+   → USCIS H-1B filings per employer        cross-reference
+     (data/sponsors.json, offline index)
+   → rank + Telegram + email + tracker row  load
 ```
 
 - **Workday adapter** hits each tenant's public CXS JSON endpoint
@@ -84,6 +86,16 @@ config (companies + filters)
   ~70 lines, all **cap-exempt**: Rutgers (886 roles), Villanova (345), Delaware Technical Community
   College (160), Hofstra (78), Fordham (64). Only Rutgers publishes `pa:city`/`pa:state`; the rest get
   their campus city from the source's `paLocation`.
+- **H-1B filing history per employer** — the JD almost never says whether a company sponsors, so the
+  monitor answers the question from **US government data instead of the JD**. `data/sponsors.json` is an
+  offline index built from the [USCIS H-1B Employer Data Hub](https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub):
+  **81,656 employers** with at least one approved H-1B petition in **FY2021–2023**, initial and continuing
+  counts per year plus the top filing states, 4.2 MB. Every alertable posting's company is matched against
+  it ([`src/sponsors.ts`](src/sponsors.ts)) and the alert carries a line like
+  `🛂 H-1B: 804 initial approvals FY21–23` — or `🛂 no H-1B filings found FY21–23` when the absence is
+  real evidence. On the 2026-09-11 dry run it spoke to **269 of 400** alertable employers.
+  See [Where the H-1B data comes from](#where-the-h-1b-data-comes-from) for the matching rules and how to
+  refresh the index.
 - **Cap-exempt coverage** — **21 of the 111 sources are H-1B cap-exempt** (universities, university
   hospitals, nonprofit research orgs), the single most valuable property here because those petitions
   skip the lottery: University of Delaware, Delaware Tech, ChristianaCare, Nemours (DE) · Penn, Jefferson
@@ -226,6 +238,8 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 - `LLM_MAX_PER_RUN` / `LLM_DRY_RUN_MAX` — ceilings on Claude calls per run (default **80** / **15**).
 - `MAX_AGE_DAYS` — only consider roles posted within N days (default **14**; applied *before* the JD-detail
   fetches so the all-US volume stays cheap). Set higher for a one-time broad sweep.
+- `npm run build:sponsors` — rebuild `data/sponsors.json` from USCIS (network; never run inside the
+  monitor). `-- --years 5` widens the fiscal-year window from the default 3.
 - Edit keyword / location / exclude lists and the company list in [`src/config.ts`](src/config.ts).
 
 ## Going live
@@ -242,6 +256,73 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 3. **Run:** `node --env-file=.env node_modules/.bin/tsx src/index.ts` locally, or push and let
    [`.github/workflows/monitor.yml`](.github/workflows/monitor.yml) run it every ~15 min.
 
+## Where the H-1B data comes from
+
+The single biggest manual step used to be: the JD says nothing about sponsorship, so look the employer up
+by hand. This section is how that got automated.
+
+### Source choice: USCIS, not DOL
+
+| | [USCIS H-1B Employer Data Hub](https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub) | [DOL OFLC LCA disclosure](https://www.dol.gov/agencies/eta/foreign-labor/performance) |
+|---|---|---|
+| shape | one CSV per fiscal year, employer × city | quarterly Excel, one row per *case* |
+| size | **2–4 MB/FY** (10 MB for the 3-FY window) | hundreds of MB per FY |
+| says | petitions actually **approved** (initial + continuing), by employer/state/NAICS | an **intent** to file, with job title, SOC code and wage |
+| verdict | **chosen** | not used |
+
+An LCA is filed before (and often without) a petition — consultancies file them speculatively — so a Data
+Hub row is the stronger claim *and* a hundredth of the bytes. The DOL files' one real advantage is the
+per-SOC median wage, which would sharpen the wage-weighted-lottery hint; that is a follow-up, and it would
+still have to be pre-aggregated offline. Denials are parsed but deliberately not shown: a denied petition
+still proves the employer files, and approval *rates* on tiny samples mislead.
+
+### Refreshing the index
+
+```bash
+npm run build:sponsors              # latest 3 fiscal years -> data/sponsors.json
+npm run build:sponsors -- --years 5 # wider window
+```
+
+The available fiscal years are scraped from the USCIS download page rather than hardcoded, so a new FY is
+picked up with no code change. [`.github/workflows/sponsor-data.yml`](.github/workflows/sponsor-data.yml)
+does exactly this on the 1st of each month (and on manual dispatch), sanity-checks the employer count,
+runs the tests and commits only if the file changed — USCIS publishes annually, so most months are a
+no-op. **Never fetch this inside the monitor run:** the monitor only ever reads the committed JSON, and a
+missing or corrupt index degrades to "no sponsor signal", never to a failed run.
+
+### Matching an employer name
+
+Company names in an ATS ("JPMorgan Chase") and in a federal filing ("JPMORGAN CHASE & CO") rarely agree,
+so [`normalizeEmployer`](src/sponsors.ts) lowercases, strips punctuation and legal forms (`Inc`, `LLC`,
+`& Co`, `Holdings`, `USA`…), glues possessives back together (`THE CHILDREN S HOSPITAL OF PHILADELPHIA` →
+`childrens hospital philadelphia`) and merges runs of initials (`W.L. Gore` ↔ `WL GORE`, `M&T` ↔ `M T`).
+Then:
+
+1. **exact** on the normalized name — most matches land here.
+2. **fuzzy**, prefix-anchored subset — the posting's name must be *contained in* the filing's, sharing the
+   first token (`Capital One` → `CAPITAL ONE SERVICES LLC`). The alert prints the matched name in
+   parentheses so a wrong guess is visible, not silent.
+
+The guards, both from real misfires while building this:
+
+- **The index name may add tokens, never drop one.** Allowing the reverse matched *Children's Hospital of
+  Philadelphia* to Boston's *CHILDRENS HOSPITAL CORPORATION*.
+- **A one-word company must be near-unambiguous** (≤3 filers share its token). `Comcast` →
+  `COMCAST CABLE COMMUNICATIONS LLC` is safe; `Alloy` matches nothing rather than inherit *ALLOY STEEL
+  INC*'s filings.
+- **"No filings found" is only claimed as evidence.** Not for a cap-exempt employer (its petitions skip
+  the lottery anyway, and universities file under legal names like *THOMAS JEFFERSON UNIVERSITY*), not for
+  a one-word name, and not for a *near miss* — if the index holds other employers sharing the first token
+  (`CapTech Consulting` vs `CAPTECH VENTURES INC`) the honest answer is "we couldn't place it", so the
+  line is omitted entirely.
+
+### How it changes the alerts
+
+Ordering in [`src/select.ts`](src/select.ts) becomes **flagged-no-sponsorship last · DE-local ·
+cap-exempt · NYC metro · employer with H-1B approvals on file · higher wage · fresher**. Cap-exempt
+employers are exempt from the new tier — a thin cap-subject filing history says nothing about an employer
+whose petitions skip the lottery. Each run logs `[sponsor] matched N/M alertable employers`.
+
 ## Caveats (honest)
 
 - Workday's CXS endpoint is **unofficial** — the adapter is isolated and a failing source is logged, not
@@ -249,3 +330,7 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 - **Coverage is the configured companies only** — it's a focused monitor, not a universal scraper. Add
   companies by editing `src/config.ts`.
 - GitHub Actions cron is best-effort (can lag a few minutes). Fine for this purpose.
+- **The sponsor index lags.** USCIS published FY2023 last; a company that only started sponsoring in
+  FY2024–25 shows as "no filings found" until the next export lands. It is also keyed on the *petitioning
+  legal entity*, so a brand that files through a parent or a PEO can be missed — which is exactly why an
+  unmatched name is never reported as "does not sponsor".

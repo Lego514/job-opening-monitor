@@ -139,3 +139,74 @@ describe("selectAlertable — LLM verdicts", () => {
     expect(out.map((p) => p.id)).toEqual(["remote-fit", "de-reject"]);
   });
 });
+
+describe("selectAlertable — H-1B filing history", () => {
+  const hist = (n: number): Posting["sponsorHistory"] => ({
+    matched: "SOME EMPLOYER INC",
+    initialApprovals: n,
+    continuingApprovals: 0,
+    lastFy: 2023,
+    fyRange: [2021, 2023],
+    confidence: "exact",
+    states: ["DE"],
+    nearMiss: false,
+  });
+  const role = (id: string, extra: Partial<Posting> = {}): Posting => ({
+    id,
+    company: id,
+    title: id,
+    location: "Austin, TX",
+    url: "u",
+    postedOn: "Posted Today",
+    sponsorship: "unknown",
+    ...extra,
+  });
+
+  it("prefers an employer with H-1B approvals on file over one with none", () => {
+    const out = selectAlertable(
+      [role("unknown-employer"), role("proven", { sponsorHistory: hist(120) })],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["proven", "unknown-employer"]);
+  });
+
+  it("does not penalize a cap-exempt employer for having no filings", () => {
+    // Cap-exempt petitions skip the lottery, so a thin cap-subject history is
+    // irrelevant — it must not fall behind a proven cap-subject employer.
+    const out = selectAlertable(
+      [role("proven", { sponsorHistory: hist(500) }), role("capexempt", { capExempt: true })],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["capexempt", "proven"]);
+  });
+
+  it("ranks below location, above wage", () => {
+    const out = selectAlertable(
+      [
+        role("rich-unproven", { salary: "$200,000" }),
+        role("proven-poor", { salary: "$90,000", sponsorHistory: hist(9) }),
+        role("de-unproven", { location: "Wilmington, DE" }),
+      ],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["de-unproven", "proven-poor", "rich-unproven"]);
+  });
+
+  it("treats a zero-approval 'none' match as unproven", () => {
+    const none: Posting["sponsorHistory"] = {
+      matched: null,
+      initialApprovals: 0,
+      continuingApprovals: 0,
+      lastFy: null,
+      fyRange: [2021, 2023],
+      confidence: "none",
+      states: [],
+      nearMiss: false,
+    };
+    const out = selectAlertable(
+      [role("no-match", { sponsorHistory: none }), role("proven", { sponsorHistory: hist(1) })],
+      { skipNoSponsorship: false },
+    );
+    expect(out.map((p) => p.id)).toEqual(["proven", "no-match"]);
+  });
+});

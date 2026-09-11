@@ -264,3 +264,43 @@ strict title-keyword `FILTERS` handled the hospital boards as-is, so no filter t
 **Leftover adapters worth building next, ranked by cap-exempt value:** Phenom People (NYP + Temple
 Health + many other hospitals), SuccessFactors (Weill Cornell), Taleo (Stony Brook, Wilmington
 University). Each would unlock several employers at once, the way PeopleAdmin unlocked five here.
+
+
+## H-1B employer filing history (2026-09-11)
+
+**The problem it kills:** for most roles the JD is silent on sponsorship — `sponsorship: "unknown"`, LLM
+`silent` — so every employer had to be looked up by hand. Now cross-referenced against USCIS data.
+
+### Shipped
+- `src/sponsors.ts` — pure normalization + matching + index construction; `scripts/build-sponsor-index.ts`
+  downloads and aggregates; `data/sponsors.json` is committed (**81,656 employers, 4.2 MB, FY2021–23**);
+  `.github/workflows/sponsor-data.yml` refreshes it monthly and commits only on change.
+- Alerts carry `🛂 H-1B: N initial approvals FY21–23` (Telegram + email + dry run), ranking gained a
+  "proven sponsor" tier below location and above wage, and each run logs `[sponsor] matched N/M`.
+- Measured on the 2026-09-11 dry run: **269/400 alertable employers matched** (73 fuzzy).
+
+### Decisions worth not relitigating
+- **USCIS Data Hub over DOL OFLC LCA disclosure.** 2–4 MB/FY vs hundreds; approved petitions vs mere
+  intent to file. The DOL files' only edge is per-SOC wages — see follow-ups.
+- **Committed JSON over a Supabase table.** No migration, no runtime dependency, no extra request in the
+  hot path, and the diff is reviewable. 4.2 MB is fine; it is rewritten at most once a year.
+- **Keep employers with continuing-only approvals.** An extension/transfer still proves the employer files.
+  Only denial-only employers are dropped (that cut is what keeps the file at 4.2 MB rather than ~7).
+- **Never claim "does not sponsor".** The line says *no filings found*, and is suppressed for cap-exempt
+  employers, one-word names, and near misses (first token present in the index but the rest unmatched).
+
+### Follow-ups
+- **Tier-3 matching: first-token-only when the token is unique in the index.** Would pick up
+  `CapTech Consulting` → `CAPTECH VENTURES INC` and `OneMain Financial` → `ONEMAIN GENERAL SERVICES
+  CORPORATION` — two real misses seen in the dry run. Deliberately not shipped: it is the first rule that
+  can attach a *wrong* employer's filings, so it needs a distinctiveness test for the token first.
+- **Known fuzzy false positives**, both visible in the alert because the matched name is printed:
+  `GSK` → `GSK SOLUTIONS INC` (an IT staffing firm, not GlaxoSmithKline) and `Warp` → `WARP DRIVE INC`.
+  A small curated alias map in `config.ts` would fix these and also reach `ChristianaCare` →
+  `CHRISTIANA CARE HEALTH SERVICES INC`, `Jefferson Health` → `THOMAS JEFFERSON UNIVERSITY`,
+  `BNY`/`Experian`/`Bosch`/`Vanguard` (all rejected as too ambiguous on one token).
+- **DOL OFLC for wages.** Pre-aggregating median wage by (employer, SOC 15-xxxx) offline would sharpen
+  the wage-weighted-lottery hint beyond the JD's own salary string. Heavy; only worth it if the hint
+  starts driving decisions.
+- **Index freshness.** USCIS's newest export is FY2023. The monthly workflow picks up FY2024/25
+  automatically when they land — the year list is scraped, not hardcoded.
