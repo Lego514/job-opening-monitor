@@ -1,0 +1,74 @@
+name: Daily apply queue
+
+# The 15-minute monitor answers "what's new?". This answers "what do I apply to
+# today?" — once, at 08:00 America/New_York, as a five-item checklist. GitHub
+# cron is UTC-only and has no DST, so two schedules are declared and the job
+# itself checks which one is actually 08:00 in New York today.
+on:
+  schedule:
+    - cron: "0 12 * * *" # 08:00 EDT (Mar–Nov)
+    - cron: "0 13 * * *" # 08:00 EST (Nov–Mar)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the queue without sending or recording it"
+        type: boolean
+        default: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Only one of the two crons is the real 08:00 today; the other is 07:00 or
+      # 09:00 and must do nothing. A manual dispatch always runs.
+      - name: Is it 08:00 in New York?
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          hour=$(TZ=America/New_York date +%H)
+          echo "New York hour: $hour"
+          if [ "$hour" = "08" ]; then echo "run=true" >> "$GITHUB_OUTPUT";
+          else echo "run=false" >> "$GITHUB_OUTPUT"; echo "Not 08:00 ET — skipping."; fi
+
+      # No Playwright, no ATS fetching, no LLM calls: this job is three Supabase
+      # reads and one Telegram message, so it finishes in seconds.
+      - name: Send the daily apply queue
+        if: steps.gate.outputs.run == 'true'
+        run: npm run digest ${{ inputs.dry_run && '-- --dry-run' || '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TRACKER_USER_ID: ${{ secrets.TRACKER_USER_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Optional tuning (repo Variables, not Secrets):
+          DIGEST_SIZE: ${{ vars.DIGEST_SIZE }}
+          DIGEST_MAX_AGE_DAYS: ${{ vars.DIGEST_MAX_AGE_DAYS }}
+          DIGEST_POOL_DAYS: ${{ vars.DIGEST_POOL_DAYS }}
+
+      # A silently broken queue is worse than a noisy one: the whole point is the
+      # message arriving every morning, so its absence has to be announced.
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured — skipping failure alert."
+            exit 0
+          fi
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=🚨 Daily apply queue FAILED — no queue today. ${RUN_URL}" \
+            -o /dev/null

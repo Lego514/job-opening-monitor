@@ -7,13 +7,21 @@
  * turns that into a one-second, actionable failure.
  */
 
-export type RunMode = "dry-run" | "seed" | "live";
+export type RunMode = "dry-run" | "seed" | "live" | "digest";
 
-/** Hard requirements per mode. A dry run neither reads nor writes state. */
+/**
+ * Hard requirements per mode. A monitor dry run neither reads nor writes state.
+ *
+ * `digest` is the daily apply queue (src/run-digest.ts). Unlike a monitor dry
+ * run, even `digest --dry-run` reads the real candidate pool out of Supabase —
+ * it only skips *sending* and *recording* — so the credentials are required
+ * either way.
+ */
 const REQUIRED: Record<RunMode, string[]> = {
   "dry-run": [],
   seed: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
   live: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
+  digest: ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"],
 };
 
 export interface EnvCheck {
@@ -48,6 +56,15 @@ export function checkEnv(env: NodeJS.ProcessEnv, mode: RunMode): EnvCheck {
     if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — matches won't be added to the tracker");
     if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) degraded.push("TELEGRAM_BOT_TOKEN/CHAT_ID — no Telegram alerts");
     if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_TO || !env.ALERT_EMAIL_FROM) degraded.push("RESEND_API_KEY/ALERT_EMAIL_TO/FROM — no email alerts");
+  }
+
+  // The digest neither fetches nor classifies; it reads what the monitor already
+  // stored. Its two soft dependencies are the channel it speaks on and the
+  // tracker it reads back — without the latter it can't tell which roles Ray has
+  // already applied to, so it would re-queue them.
+  if (mode === "digest") {
+    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) degraded.push("TELEGRAM_BOT_TOKEN/CHAT_ID — no Telegram digest");
+    if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — can't skip roles already applied to");
   }
 
   return { missing, degraded };

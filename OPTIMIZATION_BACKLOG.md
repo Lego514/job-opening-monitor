@@ -304,3 +304,52 @@ University). Each would unlock several employers at once, the way PeopleAdmin un
   starts driving decisions.
 - **Index freshness.** USCIS's newest export is FY2023. The monthly workflow picks up FY2024/25
   automatically when they land — the year list is scraped, not hardcoded.
+
+## Daily apply queue (2026-09-11)
+
+**The problem it kills:** the monitor was a firehose — several alerts a day, ~300 open matches, nothing
+turning "here are 300 roles" into "apply to these 5 today". Recall was never the issue; triage was, and
+the known failure mode is applications stalling, not opportunities going unseen.
+
+### Shipped
+- `src/digest.ts` (pure: eligibility, tiering, ordering, rendering, NY date keys), `src/run-digest.ts`
+  (entrypoint, `npm run digest [-- --dry-run]`), `src/candidates.ts` (snapshot ⇄ posting mapping and the
+  age arithmetic), digest helpers in `src/state.ts`, `digest` run mode in `src/env.ts`.
+- `src/format.ts` — `escapeHtml` + `metaLine` extracted out of `index.ts` so the queue and the firehose
+  can't drift apart. `index.ts` otherwise changed by three lines (one import, one `saveCandidates` call).
+- `supabase/0004_digest.sql` — `monitor_candidates` (one snapshot per alertable posting) and
+  `monitor_digest` (`posting_key`, `digested_on`, `rank`).
+- `.github/workflows/daily-digest.yml` — 08:00 America/New_York, plus manual dispatch with a dry-run
+  checkbox. 24 unit tests (208 total).
+
+### Decisions worth not relitigating
+- **A candidate snapshot table, not the tracker rows.** The obvious "just read `applications`" fails on
+  inspection: the tracker keeps company/role/location/status/link/notes and *nothing else* — no LLM
+  verdict, no USCIS sponsor history, no cap-exempt flag, no structured salary. A digest built off it
+  could neither rank nor explain. Adding those columns to `applications` would also push monitor-internal
+  data into the user-facing app's schema. Re-fetching 22k postings at 08:00 was never on the table.
+- **`posted_days` at capture + `first_seen`, not a stored date.** Workday reports a *relative* age
+  ("Posted 2 Days Ago"). Storing it raw would freeze a role at 2 days old forever and it would never age
+  out of the queue; storing only an absolute date would lose the ~40% of sources with unparseable dates.
+- **`ignore-duplicates` on the candidate insert.** An upsert would reset `first_seen` and restart that
+  clock every run the role reappears.
+- **Tier down, never mix.** `yes` fills first; `maybe` (then unclassified) only tops up a short day. A
+  "maybe" ranked above a "yes" would quietly devalue the whole list — but an empty morning is worse than
+  a hedge, so the fallback exists and the message admits when it fired.
+- **Ordering reused from `selectAlertable`, not reimplemented.** Object identity maps ranked postings back
+  to candidates, so there is exactly one definition of "best" in the codebase.
+- **Read-back from the tracker is URL-based.** `applications.link` is what the monitor writes, and any
+  status past `Wishlist` means "he acted on it" — including `Rejected`, which must never come back.
+
+### Follow-ups
+- **`/skip <n>` and `/done <n>` replies.** Deliberately not shipped: it needs a Telegram webhook or a
+  polling `getUpdates` loop, which is a second always-on process — the daily job is a one-shot. The
+  footer hint was left out precisely because the command doesn't exist. Marking the row Applied in the
+  tracker already achieves the "don't show me this again" half.
+- **Re-queue a role that was shown but never acted on.** Today a digested role is burned permanently. A
+  `digested_on < today - 14` + still-Wishlist rule would recycle the best of them once.
+- **Backfill.** `monitor_candidates` only fills from the next monitor run onward, so the first day or two
+  of queues are thin. A one-off backfill from `applications` + `monitor_llm_verdicts` would seed it, but
+  it can't recover sponsor history or cap-exempt flags — probably not worth the code.
+- **Weekly "you applied to N of 35 queued" nudge.** The counts are all in `monitor_digest` +
+  `applications`; this is the natural next lever against the stall.

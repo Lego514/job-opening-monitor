@@ -15,7 +15,13 @@ import {
 import { matches, locationAllowed, locationBlocked } from "./match";
 import { classifySponsorship, findSalary } from "./sponsorship";
 import { detectRemote } from "./remote";
-import { loadSeenKeys, markSeen, loadLlmVerdicts, saveLlmVerdicts } from "./state";
+import {
+  loadSeenKeys,
+  markSeen,
+  loadLlmVerdicts,
+  saveLlmVerdicts,
+  saveCandidates,
+} from "./state";
 import { classifyAll, llmEnabled, LLM_MODEL } from "./llm";
 import { addToTracker } from "./tracker";
 import { sendTelegram } from "./notify/telegram";
@@ -23,8 +29,11 @@ import { sendEmail } from "./notify/email";
 import { selectAlertable } from "./select";
 import { postedDays } from "./recency";
 import { normalizedUrlKey } from "./urlkey";
-import { isDelaware, h1bWageHint } from "./rank";
-import { loadSponsorIndex, matchSponsor, sponsorLine, type SponsorHistory } from "./sponsors";
+import { isDelaware } from "./rank";
+import { loadSponsorIndex, matchSponsor, type SponsorHistory } from "./sponsors";
+// Alert rendering is shared with the daily digest (src/digest.ts) so the two
+// never drift apart — see src/format.ts.
+import { escapeHtml, metaLine } from "./format";
 import { checkEnv, missingEnvMessage, type RunMode } from "./env";
 import { type CompanySource, type Posting, postingKey } from "./types";
 
@@ -48,10 +57,6 @@ const MAX_ALERTS_PER_RUN = intEnv("MAX_ALERTS_PER_RUN", 30);
 // no Supabase cache to lean on, so it stays deliberately tiny.
 const LLM_MAX_PER_RUN = intEnv("LLM_MAX_PER_RUN", 80);
 const LLM_DRY_RUN_MAX = intEnv("LLM_DRY_RUN_MAX", 15);
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] ?? c);
-}
 
 /** Dedup on two axes: the company-namespaced key, and the normalized application
  *  URL. The second one exists for the aggregator lists (`githublist`), which
@@ -171,37 +176,6 @@ async function enrichAll(posts: Posting[], concurrency = 8): Promise<void> {
     while (i < posts.length) await enrich(posts[i++]);
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, posts.length) }, worker));
-}
-
-// How the LLM's new-grad verdict reads in an alert. "yes" is the expected case
-// once rejects are filtered out, so it gets no badge — only a hedge is worth
-// the line space.
-const FIT_BADGE: Record<string, string> = {
-  maybe: "🤔 maybe a fit",
-  no: "🚫 not a new-grad fit",
-};
-
-function metaLine(p: Posting): string {
-  const v = p.llm;
-  return [
-    p.capExempt ? "✅ cap-exempt — no H-1B lottery" : null,
-    p.via ? `via ${p.via}` : null,
-    p.remote ? "🏠 remote-eligible" : null,
-    p.salary ? `💲${p.salary}` : null,
-    h1bWageHint(p.salary),
-    sponsorLine(p.sponsorHistory, p.company, p.capExempt),
-    p.postedOn || null,
-    p.sponsorship === "no"
-      ? `⛔ no sponsorship${p.sponsorshipReason ? ` — ${p.sponsorshipReason}` : ""}`
-      : null,
-    // The LLM's read of the JD — the part that saves actually opening it.
-    v?.sponsorship === "will-sponsor" ? "🛂 mentions sponsorship" : null,
-    v ? FIT_BADGE[v.newGradFit] ?? null : null,
-    v ? `🎓 ${v.seniority} · ${v.roleFamily}` : null,
-    v?.summary ? `📝 ${v.summary}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 /**
@@ -394,6 +368,10 @@ async function main(): Promise<void> {
     const shown = alertable.slice(0, MAX_ALERTS_PER_RUN);
     const extra = alertable.length - shown.length;
     await addToTracker(alertable); // the tracker gets them all, not just the shown ones
+    // Snapshot them for the daily apply queue (see src/digest.ts). Everything
+    // the digest needs to rank and explain a role — LLM verdict, sponsor
+    // history, salary — exists only here, in memory, right now.
+    await saveCandidates(alertable);
     await sendTelegram(telegramMessage(shown, extra));
     await sendEmail(`${alertable.length} new job match(es)`, emailHtml(shown, extra));
   }

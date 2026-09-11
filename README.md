@@ -3,7 +3,9 @@
 A scheduled pipeline that watches target employers' career systems, detects **new** roles matching my
 filters within minutes, alerts me on **Telegram + email**, and **auto-adds** them to my
 [job tracker](../job-application-tracker)'s Wishlist. Built as the top-of-funnel automation for the tracker —
-being among the first applicants matters when you're job hunting on an OPT clock.
+being among the first applicants matters when you're job hunting on an OPT clock. A second, **daily**
+job turns that stream into a five-item **apply queue** at 08:00 ET — see
+[The daily apply queue](#the-daily-apply-queue).
 
 ![stack](https://img.shields.io/badge/stack-Node%20%2B%20TypeScript-2f5bea) ![deps](https://img.shields.io/badge/runtime%20deps-0-1a9d6a) ![schedule](https://img.shields.io/badge/runs-GitHub%20Actions%20cron-697586)
 
@@ -219,6 +221,60 @@ no-ops entirely and the run behaves exactly as it did before, announcing itself 
 The same fallback covers an API outage: classification is per-posting `try`/`catch` behind a bounded
 worker pool with a timeout and retries on 429/529, and a posting with no verdict stays in the alert set.
 
+## The daily apply queue
+
+The monitor's failure mode was never recall — it was triage. Six firehose alerts a day and ~300 open
+matches answer "what's new?", but not the only question that moves an application forward: **which five do
+I apply to this morning?** [`.github/workflows/daily-digest.yml`](.github/workflows/daily-digest.yml)
+answers it once a day, at **08:00 America/New_York**, as one Telegram checklist.
+
+```
+monitor run (every ~15 min)                  daily digest (08:00 ET)
+  … rank → alert → tracker row                 read monitor_candidates  (pool)
+        └→ snapshot to monitor_candidates      read monitor_digest      (already shown)
+           (LLM verdict, sponsor history,      read applications        (already applied/rejected)
+            salary, cap-exempt, first_seen)    → selectAlertable ordering → top 5
+                                               → one Telegram checklist
+                                               → record in monitor_digest
+```
+
+**It fetches nothing.** Every candidate was snapshotted by the monitor run that first found it, so the
+whole job is three Supabase reads, a sort and one message — it finishes in seconds, and re-fetching 22k
+postings at 08:00 would be both slow and pointless. The snapshot exists because the tracker row keeps
+*none* of the ranking signal: no LLM verdict, no USCIS sponsor history, no cap-exempt flag.
+
+**What gets picked** ([`src/digest.ts`](src/digest.ts), pure and unit-tested):
+
+- LLM `newGradFit` must be **`yes`**. If fewer than `DIGEST_SIZE` of those exist, the queue reaches down to
+  `maybe`, and only then to unclassified roles (which is what a run with no `ANTHROPIC_API_KEY` produces).
+  A `no` never appears. The message says so when it had to reach.
+- Sponsorship not ruled out — neither the JD regex scan (`sponsorship: "no"`) nor the LLM
+  (`no-sponsorship`). Silence is fine; most JDs say nothing.
+- Posted within `DIGEST_MAX_AGE_DAYS` (default **10**); unknown age passes, as everywhere else. Age is
+  computed *today*, not at capture: Workday reports a relative "Posted 2 Days Ago", so `posted_days` is
+  paired with `first_seen` and a role that sits in the pool ages out on schedule.
+- **Not already shown** in an earlier digest (`monitor_digest`), and **not already acted on** — any tracker
+  row past `Wishlist` (Applied, Screen, Interview, Offer, Accepted, Rejected), matched on the normalized
+  application URL, which is what the monitor writes into `applications.link`.
+- Ordering is the monitor's own `selectAlertable` (DE-local > cap-exempt > NYC > proven sponsor > wage >
+  fresh), so the queue and the firehose never disagree about what "best" means.
+
+Each entry is a checkbox with the company, title, location, the why-it-ranks tags (cap-exempt, DE/NYC,
+🛂 H-1B filing history, wage hint, the LLM's one-line summary, age) and the apply link last. A one-line
+footer counts the pool: `312 in pool · 41 new-grad-fit · 5 shown`.
+
+```bash
+npm run digest -- --dry-run   # print the message; send nothing, record nothing
+npm run digest                # send it and record the picks
+```
+
+Tuning (repo Variables in CI, env vars locally): `DIGEST_SIZE` (default **5**), `DIGEST_MAX_AGE_DAYS`
+(**10**), `DIGEST_POOL_DAYS` (**30** — how far back the candidate pool is read; wider than the age limit so
+unknown-age roles stay reachable).
+
+Two cron lines are declared (12:00 and 13:00 UTC) because GitHub cron has no DST; the job checks the real
+New York hour and the wrong one exits immediately.
+
 ## Run it
 
 ```bash
@@ -238,16 +294,20 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 - `LLM_MAX_PER_RUN` / `LLM_DRY_RUN_MAX` — ceilings on Claude calls per run (default **80** / **15**).
 - `MAX_AGE_DAYS` — only consider roles posted within N days (default **14**; applied *before* the JD-detail
   fetches so the all-US volume stays cheap). Set higher for a one-time broad sweep.
+- `npm run digest -- --dry-run` — print tomorrow's apply queue without sending or recording it.
 - `npm run build:sponsors` — rebuild `data/sponsors.json` from USCIS (network; never run inside the
   monitor). `-- --years 5` widens the fiscal-year window from the default 3.
 - Edit keyword / location / exclude lists and the company list in [`src/config.ts`](src/config.ts).
 
 ## Going live
 
-1. **State tables:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql) and
-   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql) in your Supabase SQL editor.
+1. **State tables:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql),
+   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql) and
+   [`supabase/0004_digest.sql`](supabase/0004_digest.sql) in your Supabase SQL editor.
    Until `0003` is applied the run still works — it logs `[llm] verdict cache read/write failed` and
-   simply re-pays for verdicts it can't cache.
+   simply re-pays for verdicts it can't cache. Until `0004` is applied the monitor also still works (it
+   logs `[candidates] save failed`), but the daily queue has nothing to read and says exactly which file
+   to paste.
 2. **Secrets:** copy `.env.example` → `.env` and fill in (or set as GitHub repo secrets):
    - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only — never commit), `TRACKER_USER_ID`
    - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (from @BotFather / @userinfobot)
@@ -255,6 +315,9 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
    - `ANTHROPIC_API_KEY` (optional — enables the LLM screen; without it the run falls back to regex)
 3. **Run:** `node --env-file=.env node_modules/.bin/tsx src/index.ts` locally, or push and let
    [`.github/workflows/monitor.yml`](.github/workflows/monitor.yml) run it every ~15 min.
+4. **Daily queue:** [`.github/workflows/daily-digest.yml`](.github/workflows/daily-digest.yml) needs the
+   same Supabase + Telegram + `TRACKER_USER_ID` secrets and nothing else (no Playwright, no Anthropic key).
+   Trigger it by hand from the Actions tab any time; tick **dry run** to see the message without sending.
 
 ## Where the H-1B data comes from
 

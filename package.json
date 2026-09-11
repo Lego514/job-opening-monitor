@@ -9,6 +9,7 @@
     "seed": "node --env-file=.env --import tsx src/index.ts --seed",
     "run:live": "node --env-file=.env --import tsx src/index.ts",
     "dry-run": "tsx src/index.ts --dry-run",
+    "digest": "node --env-file-if-exists=.env --import tsx src/run-digest.ts",
     "check": "tsx scripts/check-sources.ts",
     "keywords": "tsx scripts/keywords.ts",
     "test": "vitest run",
