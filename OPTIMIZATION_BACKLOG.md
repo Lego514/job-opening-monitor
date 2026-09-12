@@ -430,3 +430,11 @@ reaches them; they have no board to add.
   today. The `seen` table could carry a per-source row count to make a drop alertable.
 - **Google Jobs (`site_name="google"`) is untried.** jobspy supports it and it aggregates the aggregators;
   it uses a different query syntax, so it's a separate piece of work.
+
+- **Hung run 2026-09-12** — manual dispatch 34709543407 stopped producing output at 17:59 in the
+  enrich/detail stage and was killed by GitHub's 6h job limit at 23:53; an orphan
+  `chrome-headless-shell` was still alive, pointing at the PageUp Playwright detail path
+  (`fetchPageUpDetail` → `loadHtml`). `page.goto`/`waitForSelector` carry 60s timeouts, so the
+  suspect is `newPage()`/context creation or a WAF page that never settles. Mitigated with a
+  job-level `timeout-minutes: 40`; root cause still open — consider wrapping each PageUp call in
+  `Promise.race` with a hard deadline and recycling the browser context on timeout.

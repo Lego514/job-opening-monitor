@@ -8,6 +8,11 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    # A healthy run takes ~11 min. Without this, a hung run (seen 2026-09-12:
+    # stuck in the JD-detail stage with an orphan chrome-headless-shell, i.e. the
+    # PageUp/Playwright path) sits for GitHub's 6-hour ceiling before the failure
+    # alert fires and the next scheduled run can start.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
