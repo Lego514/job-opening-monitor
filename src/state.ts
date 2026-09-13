@@ -24,6 +24,81 @@ function restBase(): string {
   return `${url.replace(/\/$/, "")}/rest/v1`;
 }
 
+// ---------------------------------------------------------------------------
+// Transport. Supabase's gateway returns the occasional 504 (seen on loadSeen
+// 2026-09-10 and on a 400-row markSeen 2026-09-12); each one used to kill the
+// run after the expensive fetch/LLM stages had already been paid for. Every call
+// now retries transient statuses with backoff, carries a hard timeout, and
+// writes go out in chunks so a single POST never has to insert hundreds of rows.
+
+const WRITE_CHUNK = 100;
+
+export interface RetryOpts {
+  attempts?: number; // total tries, including the first
+  baseDelayMs?: number; // backoff = base * 3^n (1s, 3s, 9s by default)
+  timeoutMs?: number;
+}
+
+/** Statuses worth a retry: gateway/server errors and rate limiting. */
+export function isTransient(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/** `fetch` with retries on transient statuses/network errors and a per-try timeout. */
+export async function sbFetch(
+  url: string,
+  init: RequestInit,
+  label: string,
+  opts: RetryOpts = {},
+): Promise<Response> {
+  const attempts = opts.attempts ?? 3;
+  const base = opts.baseDelayMs ?? 1000;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  for (let i = 0; ; i++) {
+    const last = i === attempts - 1;
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      if (!isTransient(res.status) || last) return res;
+      console.warn(`[supabase] ${label} HTTP ${res.status} — retry ${i + 1}/${attempts - 1}`);
+    } catch (e) {
+      if (last) throw e;
+      console.warn(`[supabase] ${label} ${(e as Error).message} — retry ${i + 1}/${attempts - 1}`);
+    }
+    await new Promise((r) => setTimeout(r, base * 3 ** i));
+  }
+}
+
+/**
+ * Insert rows in chunks with the given `Prefer` resolution. 409 is treated as
+ * success (ignore-duplicates semantics); a missing table surfaces as
+ * MissingTableError so callers can give the "run the migration" instruction.
+ */
+export async function sbInsert(
+  table: string,
+  rows: unknown[],
+  prefer: string,
+  label: string,
+  opts: RetryOpts = {},
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
+    const res = await sbFetch(
+      `${restBase()}/${table}`,
+      {
+        method: "POST",
+        headers: { ...sbHeaders(), Prefer: prefer },
+        body: JSON.stringify(rows.slice(i, i + WRITE_CHUNK)),
+      },
+      label,
+      opts,
+    );
+    if (!res.ok && res.status !== 409) {
+      const body = await res.text();
+      if (missingTable(res.status, body)) throw new MissingTableError(table);
+      throw new Error(`${label} HTTP ${res.status}: ${body}`);
+    }
+  }
+}
+
 /**
  * Set of already-seen posting keys (company-namespaced).
  * Paginates: PostgREST caps a response at 1000 rows by default, so a single GET
@@ -36,9 +111,11 @@ export async function loadSeenKeys(): Promise<Set<string>> {
   const keys = new Set<string>();
   for (let from = 0; ; from += PAGE) {
     const to = from + PAGE - 1;
-    const res = await fetch(`${restBase()}/monitor_seen_jobs?select=id`, {
-      headers: { ...sbHeaders(), "Range-Unit": "items", Range: `${from}-${to}` },
-    });
+    const res = await sbFetch(
+      `${restBase()}/monitor_seen_jobs?select=id`,
+      { headers: { ...sbHeaders(), "Range-Unit": "items", Range: `${from}-${to}` } },
+      "loadSeen",
+    );
     // PostgREST returns 200 for a full result, 206 for a partial (ranged) one.
     if (!res.ok && res.status !== 206) throw new Error(`loadSeen HTTP ${res.status}: ${await res.text()}`);
     const rows = (await res.json()) as { id: string }[];
@@ -52,14 +129,7 @@ export async function loadSeenKeys(): Promise<Set<string>> {
 export async function markSeen(postings: Posting[]): Promise<void> {
   if (postings.length === 0) return;
   const rows = postings.map((p) => ({ id: postingKey(p), company: p.company, title: p.title }));
-  const res = await fetch(`${restBase()}/monitor_seen_jobs`, {
-    method: "POST",
-    headers: { ...sbHeaders(), Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify(rows),
-  });
-  if (!res.ok && res.status !== 409) {
-    throw new Error(`markSeen HTTP ${res.status}: ${await res.text()}`);
-  }
+  await sbInsert("monitor_seen_jobs", rows, "resolution=ignore-duplicates", "markSeen");
 }
 
 // ---------------------------------------------------------------------------
@@ -105,12 +175,7 @@ export async function saveLlmVerdicts(
   if (verdicts.size === 0) return;
   const rows = [...verdicts].map(([id, verdict]) => ({ id, verdict, model }));
   try {
-    const res = await fetch(`${restBase()}/monitor_llm_verdicts`, {
-      method: "POST",
-      headers: { ...sbHeaders(), Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(rows),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    await sbInsert("monitor_llm_verdicts", rows, "resolution=merge-duplicates", "verdict cache");
   } catch (e) {
     // Losing the cache write costs money next run, not correctness — never fatal.
     console.error(`[llm] verdict cache write failed: ${(e as Error).message}`);
@@ -148,7 +213,7 @@ async function sbGet(path: string, table: string, range?: [number, number]): Pro
   const headers = range
     ? { ...sbHeaders(), "Range-Unit": "items", Range: `${range[0]}-${range[1]}` }
     : sbHeaders();
-  const res = await fetch(`${restBase()}/${path}`, { headers });
+  const res = await sbFetch(`${restBase()}/${path}`, { headers }, `GET ${table}`);
   if (!res.ok && res.status !== 206) {
     const body = await res.text();
     if (missingTable(res.status, body)) throw new MissingTableError(table);
@@ -184,12 +249,7 @@ export async function saveCandidates(postings: Posting[]): Promise<void> {
   if (postings.length === 0) return;
   const rows = postings.map((p) => toCandidateRow(p));
   try {
-    const res = await fetch(`${restBase()}/monitor_candidates`, {
-      method: "POST",
-      headers: { ...sbHeaders(), Prefer: "resolution=ignore-duplicates" },
-      body: JSON.stringify(rows),
-    });
-    if (!res.ok && res.status !== 409) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    await sbInsert("monitor_candidates", rows, "resolution=ignore-duplicates", "candidates");
   } catch (e) {
     console.error(`[candidates] save failed (digest pool not updated): ${(e as Error).message}`);
   }
@@ -224,16 +284,7 @@ export async function recordDigested(
     digested_on: digestedOn,
     rank: e.rank,
   }));
-  const res = await fetch(`${restBase()}/monitor_digest`, {
-    method: "POST",
-    headers: { ...sbHeaders(), Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify(rows),
-  });
-  if (!res.ok && res.status !== 409) {
-    const body = await res.text();
-    if (missingTable(res.status, body)) throw new MissingTableError("monitor_digest");
-    throw new Error(`recordDigested HTTP ${res.status}: ${body}`);
-  }
+  await sbInsert("monitor_digest", rows, "resolution=ignore-duplicates", "recordDigested");
 }
 
 /**
