@@ -14,6 +14,7 @@ import { checkEnv, missingEnvMessage } from "./env";
 import { sendTelegram } from "./notify/telegram";
 import {
   MissingTableError,
+  countDigestedOn,
   loadActedUrlKeys,
   loadCandidates,
   loadDigestedKeys,
@@ -40,6 +41,20 @@ async function main(): Promise<void> {
   for (const d of degraded) console.warn(`[env] ${d}`);
 
   const now = Date.now();
+  const today = todayKeyNY(now);
+
+  // Both of the workflow's crons fire (only one is 08:00 ET, and which one
+  // depends on DST), and GitHub may run either of them hours late. So the day's
+  // queue is guarded here rather than by the clock: whichever run gets here
+  // first sends, and the other finds today's rows and stops.
+  if (!DRY_RUN) {
+    const already = await countDigestedOn(today);
+    if (already > 0) {
+      console.log(`[digest] ${already} role(s) already queued for ${today} — nothing to do.`);
+      return;
+    }
+  }
+
   const candidates = await loadCandidates(DIGEST_POOL_DAYS);
   const [digestedKeys, actedUrlKeys] = await Promise.all([
     loadDigestedKeys(),
@@ -73,7 +88,7 @@ async function main(): Promise<void> {
   if (result.chosen.length > 0) {
     await recordDigested(
       result.chosen.map((c, i) => ({ key: c.key, rank: i + 1 })),
-      todayKeyNY(now),
+      today,
     );
   }
   console.log(

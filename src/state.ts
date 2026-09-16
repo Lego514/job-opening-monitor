@@ -265,6 +265,21 @@ export async function loadCandidates(windowDays = 30): Promise<Candidate[]> {
   return rows.map(rowToCandidate);
 }
 
+/**
+ * How many roles a digest already recorded for the given America/New_York day.
+ *
+ * This is what makes the daily send idempotent, and it replaces an exact-hour
+ * clock check in the workflow that never once matched: GitHub's scheduled runs
+ * routinely fire 4-5 hours late, so "is it 08:00 in New York?" was always false
+ * by the time the job started, and the queue silently skipped every day from
+ * 2026-09-12 to 09-16. Asking the data whether today's queue went out works no
+ * matter how late the runner wakes up.
+ */
+export async function countDigestedOn(day: string): Promise<number> {
+  const path = `monitor_digest?select=posting_key&digested_on=eq.${encodeURIComponent(day)}`;
+  return (await sbGetAll(path, "monitor_digest")).length;
+}
+
 /** Posting keys any previous digest already put in front of Ray. */
 export async function loadDigestedKeys(): Promise<Set<string>> {
   const rows = (await sbGetAll("monitor_digest?select=posting_key", "monitor_digest")) as {

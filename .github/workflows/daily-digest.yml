@@ -1,9 +1,9 @@
 name: Daily apply queue
 
 # The 15-minute monitor answers "what's new?". This answers "what do I apply to
-# today?" — once, at 08:00 America/New_York, as a five-item checklist. GitHub
-# cron is UTC-only and has no DST, so two schedules are declared and the job
-# itself checks which one is actually 08:00 in New York today.
+# today?" — once a morning, as a five-item checklist. GitHub cron is UTC-only
+# and has no DST, so two schedules are declared; `npm run digest` sends at most
+# one queue per America/New_York day, so whichever run lands first wins.
 on:
   schedule:
     - cron: "0 12 * * *" # 08:00 EDT (Mar–Nov)
@@ -26,23 +26,17 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Only one of the two crons is the real 08:00 today; the other is 07:00 or
-      # 09:00 and must do nothing. A manual dispatch always runs.
-      - name: Is it 08:00 in New York?
-        id: gate
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          hour=$(TZ=America/New_York date +%H)
-          echo "New York hour: $hour"
-          if [ "$hour" = "08" ]; then echo "run=true" >> "$GITHUB_OUTPUT";
-          else echo "run=false" >> "$GITHUB_OUTPUT"; echo "Not 08:00 ET — skipping."; fi
+      # No clock gate here. An earlier version skipped unless the New York hour
+      # was exactly "08", which never once matched: GitHub's scheduled runs fire
+      # 4-5 hours late, so every run from 2026-09-12 to 09-16 "succeeded" without
+      # sending anything. The de-duplication is now inside the job, keyed on the
+      # New York date, so a late runner still delivers the day's queue.
+      - name: New York time at start
+        run: 'echo "New York: $(TZ=America/New_York date "+%F %H:%M")"'
 
       # No Playwright, no ATS fetching, no LLM calls: this job is three Supabase
       # reads and one Telegram message, so it finishes in seconds.
       - name: Send the daily apply queue
-        if: steps.gate.outputs.run == 'true'
         run: npm run digest ${{ inputs.dry_run && '-- --dry-run' || '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
