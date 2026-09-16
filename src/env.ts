@@ -53,7 +53,10 @@ export function checkEnv(env: NodeJS.ProcessEnv, mode: RunMode): EnvCheck {
   }
 
   if (mode === "live") {
-    if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — matches won't be added to the tracker");
+    // A monitor run only writes tracker rows through the TRACKER_BULK escape
+    // hatch now — the daily apply queue is what fills the tracker. Still worth
+    // reporting, since an unset id makes that hatch silently do nothing.
+    if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — no tracker rows (the daily queue writes them now)");
     if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) degraded.push("TELEGRAM_BOT_TOKEN/CHAT_ID — no Telegram alerts");
     if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_TO || !env.ALERT_EMAIL_FROM) degraded.push("RESEND_API_KEY/ALERT_EMAIL_TO/FROM — no email alerts");
   }
@@ -64,7 +67,7 @@ export function checkEnv(env: NodeJS.ProcessEnv, mode: RunMode): EnvCheck {
   // already applied to, so it would re-queue them.
   if (mode === "digest") {
     if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) degraded.push("TELEGRAM_BOT_TOKEN/CHAT_ID — no Telegram digest");
-    if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — can't skip roles already applied to");
+    if (!env.TRACKER_USER_ID) degraded.push("TRACKER_USER_ID — no tracker rows for the queue, and can't skip roles already applied to");
   }
 
   return { missing, degraded };

@@ -84,7 +84,15 @@ jobs:
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
           MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}
           WORKDAY_MAX_RESULTS: ${{ vars.WORKDAY_MAX_RESULTS }}
+          # Ceiling on Claude calls per run. The code default (80) is the right
+          # number — delete this repo Variable if it still exists: it was raised
+          # to 400 on 2026-09-12 to drain a one-time backlog that is long gone,
+          # and left set it is a licence to spend 5x the budget on a busy run.
           LLM_MAX_PER_RUN: ${{ vars.LLM_MAX_PER_RUN }}
+          # Escape hatch only: TRACKER_BULK=1 restores the old behaviour where
+          # every alertable posting became a tracker row. The daily apply queue
+          # writes the tracker now — leave this unset.
+          TRACKER_BULK: ${{ vars.TRACKER_BULK }}
 
       # The monitor needs monitoring: a crashing cron is otherwise invisible
       # until you notice the alerts stopped. (This is exactly what happened

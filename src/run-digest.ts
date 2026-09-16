@@ -9,9 +9,11 @@
  *
  * `--dry-run` prints the message and records nothing.
  */
+import { candidateToPosting } from "./candidates";
 import { selectDigest, digestMessage, todayKeyNY } from "./digest";
 import { checkEnv, missingEnvMessage } from "./env";
 import { sendTelegram } from "./notify/telegram";
+import { QUEUE_NOTE, addToTracker } from "./tracker";
 import {
   MissingTableError,
   countDigestedOn,
@@ -90,6 +92,16 @@ async function main(): Promise<void> {
       result.chosen.map((c, i) => ({ key: c.key, rank: i + 1 })),
       today,
     );
+    // The queue is what fills the tracker now. These five are the roles Ray was
+    // asked to apply to today, so they are the only ones worth a row he has to
+    // triage — the monitor's own firehose writes nothing (see src/tracker.ts).
+    // Never fatal: the queue has already gone out, and a tracker row is a
+    // convenience, not the deliverable.
+    try {
+      await addToTracker(result.chosen.map((c) => candidateToPosting(c, now)), QUEUE_NOTE);
+    } catch (e) {
+      console.error(`[tracker] queue rows not written: ${(e as Error).message}`);
+    }
   }
   console.log(
     `[digest] sent ${result.counts.shown} role(s) — ` +

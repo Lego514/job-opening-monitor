@@ -13,6 +13,7 @@
     "check": "tsx scripts/check-sources.ts",
     "alerts": "node --env-file-if-exists=.env --import tsx scripts/alerts-dump.ts",
     "keywords": "tsx scripts/keywords.ts",
+    "tracker:cleanup": "node --env-file-if-exists=.env --import tsx scripts/tracker-cleanup.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build:sponsors": "tsx scripts/build-sponsor-index.ts"

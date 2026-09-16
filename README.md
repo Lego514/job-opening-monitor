@@ -1,10 +1,10 @@
 # Job-Opening Monitor
 
 A scheduled pipeline that watches target employers' career systems, detects **new** roles matching my
-filters within minutes, alerts me on **Telegram + email**, and **auto-adds** them to my
-[job tracker](../job-application-tracker)'s Wishlist. Built as the top-of-funnel automation for the tracker —
-being among the first applicants matters when you're job hunting on an OPT clock. A second, **daily**
-job turns that stream into a five-item **apply queue** at 08:00 ET — see
+filters within minutes, and alerts me on **Telegram + email**. Built as the top-of-funnel automation for
+my [job tracker](../job-application-tracker) — being among the first applicants matters when you're job
+hunting on an OPT clock. A second, **daily** job turns that stream into a five-item **apply queue** at
+08:00 ET and writes *those* five into the tracker's Wishlist — see
 [The daily apply queue](#the-daily-apply-queue).
 
 ![stack](https://img.shields.io/badge/stack-Node%20%2B%20TypeScript-2f5bea) ![deps](https://img.shields.io/badge/runtime%20deps-4-1a9d6a) ![schedule](https://img.shields.io/badge/runs-GitHub%20Actions%20cron-697586)
@@ -20,11 +20,13 @@ config (companies + filters)
    → match (wide keyword + location net)    pre-filter
    → JD scan (sponsorship + salary)         enrich
    → diff vs. seen (Supabase)               dedup
-   → LLM screen (Claude Haiku 4.5,          classify
-     cached in Supabase, new roles only)
    → USCIS H-1B filings per employer        cross-reference
      (data/sponsors.json, offline index)
-   → rank + Telegram + email + tracker row  load
+   → "worth classifying?" gate              gate
+   → LLM screen (Claude Haiku 4.5,          classify
+     cached in Supabase, gated roles only)
+   → rank + Telegram + email                load
+   → candidate snapshot (digest pool)
 ```
 
 - **Workday adapter** hits each tenant's public CXS JSON endpoint
@@ -290,30 +292,73 @@ verdict into the Telegram/email meta line, and a `no-sponsorship` verdict sets t
 regex classifier sets. The LLM can only ever *add* a sponsorship flag — a regex-flagged role stays
 flagged.
 
+### The "worth classifying" gate — the cost lever
+
+`src/screen.ts`. **Only postings that could plausibly reach the daily queue are sent to the model.** A
+posting is worth a call when, and only when:
+
+> it is **DE-local** · **or** its employer is **cap-exempt** · **or** it is **NYC-metro** · **or** it
+> is **remote-US** — **and** the JD has not already ruled sponsorship out.
+
+USCIS filing history is deliberately **not** a reason on its own, though the first version made it one.
+It reads like the strongest reason there is — a proven sponsor is exactly who Ray needs — but it fails
+as a *filter* here, because the source list was built out of big sponsors: measured on a real run
+(2026-09-16) it alone admitted **1,300 of 2,667** matches and left the gate keeping 77%, which is not a
+cost lever at all. It stays where it earns its keep: a ranking tier in `selectAlertable` and a line in
+the alert.
+
+Everything in that rule is computed before the stage runs (`isDelaware`/`isNycMetro` in
+[`rank.ts`](src/rank.ts), `capExempt` from the source config, the remote flag from the adapter or
+[`remote.ts`](src/remote.ts)), so
+the gate costs nothing — which is the point, since it is **the same list `selectAlertable` ranks on**.
+That is what makes the cut safe rather than arbitrary: a role that fails the gate fails *every*
+ordering tier, so no verdict could have lifted it above a single Delaware, cap-exempt, NYC or
+proven-sponsor role, and it can never reach the five-role morning queue. The last clause is the same
+argument in reverse — `applyVerdict` can only ever *add* a "no", so paying to read a JD that already
+says "no sponsorship" cannot change one decision.
+
+Gated-out roles are **not dropped**: they stay in the alerts, regex-judged exactly as they were before
+the LLM stage existed, and they sort below the screened ones. Every run prints the split and the
+reasons:
+
+```
+[gate] 2053/2667 worth classifying (de-local 131, cap-exempt 116, nyc-metro 503, remote-us 3) — the other 614 stay regex-judged.
+```
+
+The classification queue is ordered by `selectAlertable` **before** the gate and the ceiling are
+applied, so if a ceiling ever does bite, it bites the least valuable roles.
+
 ### Cost
 
-Four things keep this well under **$1/day**:
+Five things hold the spend down:
 
-- **Only new postings are classified.** The stage runs *after* the diff against `seen`, so the ~280
-  roles that match every run cost nothing; only the 15–50 genuinely new ones are sent.
+- **The gate above** — the big one. Without it, 200–350 new roles a run were being classified at
+  $0.52–$0.97 each run, i.e. **$3–6/day** against a $0.40/day design target (measured 2026-09-16; that
+  is what exhausted the API credit). Over a full dry run the gate keeps **~28%** of matches, so expect
+  roughly a quarter of the previous spend. *This figure is measured over all matches, not over the
+  new-postings slice the stage actually bills for — check a real run's `[gate]` and `[llm]` lines and
+  correct this line rather than trusting it.*
+- **Only new postings are classified.** The stage runs *after* the diff against `seen`, so the ~2,900
+  roles that match every run cost nothing.
 - **Verdicts are cached in Supabase** (`monitor_llm_verdicts`, see
   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql)) keyed by posting key, so re-runs,
-  seeds, and roles that drop off a board and return are free.
+  seeds, and roles that drop off a board and return are free. The cache is applied to **every** posting,
+  including gated-out ones: a verdict already bought is free to reuse.
 - **The JD is truncated** to ~4k characters — seniority and sponsorship language lives near the top.
-- **Hard ceilings**: `LLM_MAX_PER_RUN` (default 80) and `LLM_DRY_RUN_MAX` (default 15, since a dry run
-  has no cache to amortize against). Postings past the ceiling are *deferred*, not dropped — they are
-  held out of `seen` and come round again on the next run (~15 min), so a backlog drains over a few runs
+- **Hard ceilings**: `LLM_MAX_PER_RUN` (default **80**) and `LLM_DRY_RUN_MAX` (default 15, since a dry
+  run has no cache to amortize against). Postings past the ceiling are *deferred*, not dropped — they
+  are held out of `seen` and come round again on the next run, so a backlog drains over a few runs
   instead of being alerted unscreened and then forgotten.
 
-At Haiku 4.5 rates ($1/MTok in, $5/MTok out) that works out to a **measured $0.0028 per role** (first CI
-run: 80 roles, $0.2276). Steady state is ~140 genuinely-new roles a day, so **~$0.40/day**. Every run
-prints its own spend: `[llm] classified N postings, ~$X …`.
+At Haiku 4.5 rates ($1/MTok in, $5/MTok out) a verdict is a **measured $0.0028**. Every run prints its
+own spend: `[llm] classified N postings, ~$X (C from cache, F failed, D deferred, S gated out)`.
 
-> **One-time backlog.** Widening the pre-filter makes ~2000 already-open roles look new. At 80/run they
-> drain over ~25 runs (about 6 hours of cron) for roughly **$5.60 once**. Raise `LLM_MAX_PER_RUN` to
-> drain it faster, or `npm start -- --seed` to skip screening the backlog entirely.
+> ⚠️ **Delete the `LLM_MAX_PER_RUN` repo Variable if it still exists.** It was set to `400` on
+> 2026-09-12 to drain a one-time backlog that is long since drained, and left in place it silently
+> overrides the 80 default — a licence to spend 5x the budget on a busy run.
+> `gh variable delete LLM_MAX_PER_RUN` (or Settings → Secrets and variables → Actions → Variables).
 
-### Without a key
+### Without a key, and when the API fails
 
 `ANTHROPIC_API_KEY` is a GitHub repo secret and is normally *not* set locally. With no key the stage
 no-ops entirely and the run behaves exactly as it did before, announcing itself through the existing
@@ -323,8 +368,24 @@ no-ops entirely and the run behaves exactly as it did before, announcing itself 
 [env] ANTHROPIC_API_KEY — LLM classification off, regex fallback
 ```
 
-The same fallback covers an API outage: classification is per-posting `try`/`catch` behind a bounded
-worker pool with a timeout and retries on 429/529, and a posting with no verdict stays in the alert set.
+A configured-but-failing API is a **different** case, and it **fails closed**. A posting whose call
+failed was never screened, so alerting it as though it had passed the screen is exactly the quality
+degradation the stage exists to prevent — and marking it `seen` at the same time would burn it
+permanently. So a failed posting is **held back**: out of the alerts, out of `seen`, retried on the next
+run. On top of that:
+
+- **A credit-exhausted account stops the run's classifications.** The API answers
+  `400 invalid_request_error … Your credit balance is too low` identically for every call, so after
+  `CREDIT_ERROR_LIMIT` (3) of them the stage abandons the rest of the batch instead of making 350 doomed
+  calls and writing 350 identical log lines (which is what the 2026-09-16 runs did). Transient 429/529
+  are deliberately *not* treated this way — they keep the SDK's existing retry behaviour.
+- **The run says so, on Telegram, and still succeeds:**
+  ```
+  ⚠️ LLM classification unavailable (credit/API error) — 82 role(s) held back, alerts are regex-only
+  this run. Top up the Anthropic credit to resume screening.
+  ```
+  Non-fatal on purpose: the run did its job for everything not held back, and failing the workflow would
+  fire the "run FAILED" alarm for a billing problem.
 
 ## The daily apply queue
 
@@ -335,12 +396,13 @@ answers it once a day, at **08:00 America/New_York**, as one Telegram checklist.
 
 ```
 monitor run (every ~15 min)                  daily digest (08:00 ET)
-  … rank → alert → tracker row                 read monitor_candidates  (pool)
+  … rank → alert                               read monitor_candidates  (pool)
         └→ snapshot to monitor_candidates      read monitor_digest      (already shown)
            (LLM verdict, sponsor history,      read applications        (already applied/rejected)
             salary, cap-exempt, first_seen)    → selectAlertable ordering → top 5
                                                → one Telegram checklist
                                                → record in monitor_digest
+                                               → 5 tracker rows (Wishlist)
 ```
 
 **It fetches nothing.** Every candidate was snapshotted by the monitor run that first found it, so the

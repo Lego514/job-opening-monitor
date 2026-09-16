@@ -11,18 +11,24 @@
  * "unknown"; ~80% of matches came back "unknown").
  *
  * Cost discipline, in order of how much it saves:
- *   1. Only NEW postings are classified (post-diff), never the ~2500 matches.
- *   2. Verdicts are cached in Supabase by posting key, so a re-run, a seed, or
+ *   1. Only postings that could plausibly reach the daily queue are classified
+ *      (the `gate` option — see src/screen.ts). This is the big one: it is what
+ *      took the stage from 200-350 calls a run back down to a few dozen.
+ *   2. Only NEW postings are classified (post-diff), never the ~2900 matches.
+ *   3. Verdicts are cached in Supabase by posting key, so a re-run, a seed, or
  *      a role that reappears costs nothing.
- *   3. The JD is truncated (JD_CHARS) — sponsorship and seniority language is
+ *   4. The JD is truncated (JD_CHARS) — sponsorship and seniority language is
  *      near the top, and a full JD is mostly boilerplate benefits text.
- *   4. A hard per-run ceiling (LLM_MAX_PER_RUN) bounds the worst case.
- * Haiku 4.5 at ~1.2k in / ~120 out tokens per role is ~$0.0018 each.
+ *   5. A hard per-run ceiling (LLM_MAX_PER_RUN) bounds the worst case.
+ * Haiku 4.5 costs a measured ~$0.0028 per role.
  *
- * Graceful degradation is not optional: with no ANTHROPIC_API_KEY (the local
- * case) or during an API outage, every function here no-ops and the run falls
- * back to the regex behaviour it had before. An LLM failure must never cost a
- * run its alerts.
+ * Graceful degradation is not optional — but it FAILS CLOSED. With no
+ * ANTHROPIC_API_KEY (the local case) the stage no-ops and the run is regex-only
+ * exactly as it was before this existed. When the API is configured and a call
+ * FAILS, though, the role is held back rather than alerted: an unscreened role
+ * presented as if it had passed the screen is worse than no alert at all, and
+ * that is precisely what happened on 2026-09-16 when the account ran out of
+ * credit and 82 unscreened roles went out as normal alerts.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -192,15 +198,24 @@ export function applyVerdict(p: Posting, v: LlmVerdict): void {
 export interface ClassifyResult {
   classified: number; // verdicts obtained from the API this run
   cached: number; // verdicts served from the Supabase cache
-  failed: number; // postings the API could not classify (left to the regex path)
+  failed: number; // attempted and failed (held back, see `held`)
+  deferred: number; // never attempted — past the ceiling, or abandoned (held back too)
+  skipped: number; // gated out on purpose: regex-judged, NOT held back
   costUsd: number; // estimated spend for this run
   fresh: Map<string, LlmVerdict>; // API verdicts, for the caller to persist
   /**
-   * Keys the per-run ceiling pushed past — NOT attempted, as opposed to
-   * attempted and failed. The caller should leave these out of `seen` so they
-   * come back next run rather than being alerted unscreened and then forgotten.
+   * Keys that must not be alerted OR marked seen this run — the union of the
+   * ceiling's overflow, the roles a short-circuit abandoned, and the ones whose
+   * call failed. Holding them back is what makes the stage fail closed: they
+   * come round again next run instead of going out unscreened and then being
+   * burned in `seen` forever.
+   *
+   * Gated-out postings are deliberately NOT in here: they were never meant to
+   * be classified, so the regex path is their real verdict, not a degradation.
    */
-  deferred: Set<string>;
+  held: Set<string>;
+  /** Every call is failing for billing reasons — see `isCreditExhausted`. */
+  creditExhausted: boolean;
 }
 
 export interface ClassifyOpts {
@@ -208,8 +223,71 @@ export interface ClassifyOpts {
   cache?: Map<string, LlmVerdict>;
   /** Hard ceiling on API calls this run. */
   max: number;
+  /**
+   * Which postings are worth paying for (src/screen.ts). Cache hits are applied
+   * to everything either way — a verdict already bought is free — but a posting
+   * this rejects is never SENT. Default: everything.
+   */
+  gate?: (p: Posting) => boolean;
   concurrency?: number;
   client?: Anthropic; // injected in tests; never constructed there
+}
+
+/**
+ * Is this error "the account is out of credit", as opposed to a blip?
+ *
+ * The distinction matters because the two need opposite handling: a 429/529 is
+ * transient and worth retrying, while a billing 400 will fail identically for
+ * every remaining posting in the run — retrying it just burns wall clock and
+ * fills the log with 350 copies of the same line (which is exactly what the
+ * 2026-09-16 runs did). Matched on the shape the API actually returns:
+ * `400 {"type":"error","error":{"type":"invalid_request_error","message":"Your
+ * credit balance is too low …"}}`.
+ */
+export function isCreditExhausted(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as {
+    status?: number;
+    message?: string;
+    error?: { error?: { type?: string; message?: string } };
+  };
+  const body = err.error?.error;
+  const text = `${body?.message ?? ""} ${err.message ?? ""}`;
+  // The SDK exposes `status`; a plain Error (and the SDK's own message) carries
+  // the code as the first token instead.
+  if (err.status !== 400 && !/^400\b/.test(err.message ?? "")) return false;
+  const invalidRequest =
+    body?.type === "invalid_request_error" || /invalid_request_error/.test(text);
+  return invalidRequest && /credit balance|insufficient credit/i.test(text);
+}
+
+/**
+ * How many identical billing failures to take before abandoning the run's
+ * remaining postings. More than one because a single 400 could in principle be
+ * about that one request; three in a row cannot be.
+ */
+const CREDIT_ERROR_LIMIT = 3;
+
+/**
+ * The non-fatal Telegram warning for a run whose screening degraded.
+ *
+ * Silent degradation is the bug this fixes: the run "succeeded", the alerts
+ * looked normal, and nothing said the roles in them had never been read. The
+ * warning has to name the cause and the count, because the fix (top up credit)
+ * is Ray's and nobody else's.
+ */
+export function llmFailureWarning(r: {
+  failed: number;
+  held: Set<string>;
+  creditExhausted: boolean;
+}): string | null {
+  if (r.failed === 0) return null;
+  const n = r.held.size;
+  return r.creditExhausted
+    ? `⚠️ LLM classification unavailable (credit/API error) — ${n} role(s) held back, ` +
+        `alerts are regex-only this run. Top up the Anthropic credit to resume screening.`
+    : `⚠️ LLM classification partly failed (${r.failed} call(s)) — ${n} role(s) held back ` +
+        `for the next run; the alerts below are regex-only.`;
 }
 
 interface OneResult {
@@ -239,15 +317,21 @@ async function classifyOne(client: Anthropic, p: Posting): Promise<OneResult> {
 /**
  * Classify postings, attaching a verdict to each one it can.
  *
- * Cache hits are applied for free. Everything else goes through a bounded
- * worker pool; a per-posting try/catch means one bad JD, one timeout, or a
- * total API outage costs those roles their verdict and nothing more — they keep
- * the regex-derived fields and stay in the alert set.
+ * Cache hits are applied for free, to every posting — a verdict already bought
+ * costs nothing to reuse, so the gate only decides who gets *sent*. Everything
+ * else goes through a bounded worker pool with a per-posting try/catch.
+ *
+ * A failure never throws, but it is never silent either: the posting goes into
+ * `held` so the caller can keep it out of the alerts and out of `seen`. And
+ * when the failures are billing 400s, the run stops calling after
+ * CREDIT_ERROR_LIMIT of them — every remaining call would fail identically.
  */
 export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise<ClassifyResult> {
   const fresh = new Map<string, LlmVerdict>();
+  const held = new Set<string>();
   let cached = 0;
   let failed = 0;
+  let skipped = 0;
   let inTokens = 0;
   let outTokens = 0;
 
@@ -257,6 +341,8 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
     if (hit) {
       applyVerdict(p, hit);
       cached++;
+    } else if (opts.gate && !opts.gate(p)) {
+      skipped++; // regex-judged on purpose — not a degradation, so not held back
     } else {
       todo.push(p);
     }
@@ -264,20 +350,25 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
 
   // The caller passes these in rank order, so the ceiling drops the least
   // promising roles — and they are deferred, not discarded.
-  const batch = todo.slice(0, Math.max(0, opts.max));
-  const deferred = new Set(todo.slice(batch.length).map(postingKey));
-  if (deferred.size > 0) {
-    console.warn(`[llm] ceiling reached — ${deferred.size} posting(s) deferred to the next run.`);
+  const overflow = todo.slice(Math.max(0, opts.max));
+  for (const p of overflow) held.add(postingKey(p));
+  if (overflow.length > 0) {
+    console.warn(`[llm] ceiling reached — ${overflow.length} posting(s) deferred to the next run.`);
   }
+  const batch = todo.slice(0, Math.max(0, opts.max));
+
+  let creditErrors = 0;
+  let abandoned = false;
 
   if (batch.length > 0) {
     // The SDK's own retry covers 429/529/5xx and connection errors; the timeout
-    // stops one hung request from holding a worker for the whole run.
+    // stops one hung request from holding a worker for the whole run. A 400 is
+    // not retried by the SDK, which is what makes the short-circuit below cheap.
     const client =
       opts.client ?? new Anthropic({ maxRetries: 3, timeout: 30_000 });
     let i = 0;
     const worker = async () => {
-      while (i < batch.length) {
+      while (i < batch.length && !abandoned) {
         const p = batch[i++];
         try {
           const { verdict: v, inTokens: ti, outTokens: to } = await classifyOne(client, p);
@@ -288,11 +379,20 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
             fresh.set(postingKey(p), v);
           } else {
             failed++;
+            held.add(postingKey(p));
             console.error(`[llm] ${p.company} — ${p.title}: unusable verdict`);
           }
         } catch (e) {
           failed++;
+          held.add(postingKey(p));
           console.error(`[llm] ${p.company} — ${p.title}: ${(e as Error).message}`);
+          if (isCreditExhausted(e) && ++creditErrors >= CREDIT_ERROR_LIMIT && !abandoned) {
+            abandoned = true;
+            console.error(
+              `[llm] credit exhausted — abandoning the rest of this run's classifications; ` +
+                `every remaining call would fail the same way.`,
+            );
+          }
         }
       }
     };
@@ -300,12 +400,24 @@ export async function classifyAll(posts: Posting[], opts: ClassifyOpts): Promise
     await Promise.all(Array.from({ length: lanes }, worker));
   }
 
+  // Whatever the short-circuit walked away from got neither a verdict nor an
+  // attempt, so it is held back exactly like a ceiling overflow.
+  if (abandoned) {
+    for (const p of batch) {
+      const k = postingKey(p);
+      if (!fresh.has(k)) held.add(k);
+    }
+  }
+
   return {
     classified: fresh.size,
     cached,
     failed,
+    deferred: held.size - failed,
+    skipped,
     costUsd: inTokens * PRICE_IN + outTokens * PRICE_OUT,
     fresh,
-    deferred,
+    held,
+    creditExhausted: creditErrors > 0,
   };
 }

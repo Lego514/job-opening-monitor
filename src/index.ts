@@ -24,7 +24,8 @@ import {
   saveLlmVerdicts,
   saveCandidates,
 } from "./state";
-import { classifyAll, llmEnabled, LLM_MODEL } from "./llm";
+import { classifyAll, llmEnabled, llmFailureWarning, LLM_MODEL } from "./llm";
+import { gateSummary, worthClassifying } from "./screen";
 import { addToTracker } from "./tracker";
 import { sendTelegram } from "./notify/telegram";
 import { sendEmail } from "./notify/email";
@@ -42,6 +43,12 @@ import { type CompanySource, type Posting, postingKey } from "./types";
 const DRY_RUN = process.argv.includes("--dry-run");
 const SEED = process.argv.includes("--seed"); // mark current matches seen, don't alert
 const SKIP_NO_SPONSORSHIP = /^(1|true|yes)$/i.test(process.env.SKIP_NO_SPONSORSHIP ?? "");
+// Escape hatch for the old behaviour: write a tracker row for every alertable
+// posting. Off by default — see the tracker section in the README. The per-run
+// bulk insert turned the tracker into a 4,389-row dumping ground with zero rows
+// past Wishlist, i.e. a companion app Ray could not work in. The daily apply
+// queue writes the rows now.
+const TRACKER_BULK = /^(1|true|yes)$/i.test(process.env.TRACKER_BULK ?? "");
 
 /** Parse a positive-integer env var, falling back if unset/invalid (avoids a
  *  typo'd MAX_AGE_DAYS becoming NaN and silently filtering out every role). */
@@ -258,27 +265,43 @@ function emailHtml(list: Posting[], extra = 0): string {
   return `<p>${list.length + extra} new role(s) matched — ${breakdown(list)}:</p><ul>${items}</ul>${more}`;
 }
 
+/** What the classification stage tells the rest of the run. */
+interface ClassifyOutcome {
+  /** Posting keys to keep out of BOTH the alerts and `seen` (fail closed). */
+  held: Set<string>;
+  /** A non-fatal Telegram warning, when screening degraded this run. */
+  warning: string | null;
+}
+
+const NO_CLASSIFICATION: ClassifyOutcome = { held: new Set(), warning: null };
+
 /**
  * Run the LLM classification stage over `posts`, attaching verdicts in place.
  *
  * No-ops entirely without an API key — that is the regex-only fallback path, and
- * it is the normal local configuration. `useCache` is off for a dry run, which
- * has no Supabase credentials at all.
+ * it is the normal local configuration (nothing is held back in that case: the
+ * run is *designed* to be regex-only, rather than degraded into it). `useCache`
+ * is off for a dry run, which has no Supabase credentials at all.
+ *
+ * `posts` is the whole ranked queue, not the gated subset: a cached verdict is
+ * free and worth applying to anything, so the gate is passed *into* classifyAll
+ * and only decides which postings are actually sent.
  */
 async function classifyStage(
   posts: Posting[],
   max: number,
   useCache: boolean,
-): Promise<Set<string>> {
-  if (!llmEnabled() || posts.length === 0) return new Set();
+): Promise<ClassifyOutcome> {
+  if (!llmEnabled() || posts.length === 0) return NO_CLASSIFICATION;
   const cache = useCache ? await loadLlmVerdicts(posts.map(postingKey)) : undefined;
-  const r = await classifyAll(posts, { cache, max });
+  const r = await classifyAll(posts, { cache, max, gate: worthClassifying });
   if (useCache) await saveLlmVerdicts(r.fresh, LLM_MODEL);
   console.log(
     `[llm] classified ${r.classified} postings, ~$${r.costUsd.toFixed(4)} ` +
-      `(${r.cached} from cache, ${r.failed} failed, ${r.deferred.size} deferred) — ${LLM_MODEL}`,
+      `(${r.cached} from cache, ${r.failed} failed, ${r.deferred} deferred, ` +
+      `${r.skipped} gated out) — ${LLM_MODEL}`,
   );
-  return r.deferred;
+  return { held: r.held, warning: llmFailureWarning(r) };
 }
 
 async function main(): Promise<void> {
@@ -324,8 +347,16 @@ async function main(): Promise<void> {
     // A dry run has no Supabase cache to amortize against, so classification is
     // capped hard: rank first, spend on the top of the list only, then re-rank
     // with the verdicts applied (unclassified roles pass through untouched).
+    // The gate is reported over the WHOLE ranked set, not the slice, because
+    // that ratio is the thing a dry run exists to measure — a live run diffs
+    // against `seen` first, so its queue is a fraction of this size.
     const candidates = selectAlertable(matchedList, { ...opts, skipLlmReject: false });
-    await classifyStage(candidates.slice(0, LLM_DRY_RUN_MAX), LLM_DRY_RUN_MAX, false);
+    console.log(gateSummary(candidates));
+    await classifyStage(
+      candidates.filter(worthClassifying).slice(0, LLM_DRY_RUN_MAX),
+      LLM_DRY_RUN_MAX,
+      false,
+    );
     const ranked = selectAlertable(matchedList, opts);
     for (const p of ranked) {
       const meta = metaLine(p);
@@ -347,24 +378,24 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Classify only what's genuinely new — never the ~2500 that match every run.
-  // Cached verdicts make a re-run or a reappearing role free. Rank order first,
-  // so if the ceiling bites it bites the least promising roles.
-  const deferred = await classifyStage(
-    selectAlertable(fresh, { ...opts, skipLlmReject: false }),
-    LLM_MAX_PER_RUN,
-    true,
-  );
-  // A deferred posting was never looked at. Alerting on it unscreened AND
+  // Classify only what's genuinely new — never the ~2900 that match every run —
+  // and, within that, only what the gate says could plausibly reach the daily
+  // queue. Cached verdicts make a re-run or a reappearing role free. Rank order
+  // first, so if the ceiling bites it bites the least promising roles.
+  const queue = selectAlertable(fresh, { ...opts, skipLlmReject: false });
+  console.log(gateSummary(queue));
+  const { held, warning } = await classifyStage(queue, LLM_MAX_PER_RUN, true);
+  // A held-back posting was either never looked at (ceiling, or a run that gave
+  // up on a dead API) or looked at and failed. Alerting on it unscreened AND
   // marking it seen would burn it permanently, so hold it back entirely: it
   // comes round again next run (in ~15 min) with budget to spare.
-  const considered = deferred.size ? fresh.filter((p) => !deferred.has(postingKey(p))) : fresh;
+  const considered = held.size ? fresh.filter((p) => !held.has(postingKey(p))) : fresh;
 
   const alertable = selectAlertable(considered, opts);
   console.log(sponsorSummary(alertable));
   console.log(
     `[diff] ${fresh.length} new; ${alertable.length} to alert` +
-      (deferred.size ? `; ${deferred.size} held for the next run` : "") + ".",
+      (held.size ? `; ${held.size} held back for the next run` : "") + ".",
   );
 
   // Record everything we considered (including aged-out / skipped) BEFORE
@@ -376,14 +407,23 @@ async function main(): Promise<void> {
   if (alertable.length > 0) {
     const shown = alertable.slice(0, MAX_ALERTS_PER_RUN);
     const extra = alertable.length - shown.length;
-    await addToTracker(alertable); // the tracker gets them all, not just the shown ones
+    // The tracker is NOT a copy of the firehose any more: the daily apply queue
+    // is what creates `applications` rows, because those are the roles Ray is
+    // actually working. TRACKER_BULK=1 restores the old per-run bulk insert.
+    if (TRACKER_BULK) await addToTracker(alertable);
     // Snapshot them for the daily apply queue (see src/digest.ts). Everything
     // the digest needs to rank and explain a role — LLM verdict, sponsor
-    // history, salary — exists only here, in memory, right now.
+    // history, salary — exists only here, in memory, right now. This is also
+    // why dropping the bulk tracker insert loses nothing: the pool keeps it all.
     await saveCandidates(alertable);
     await sendTelegram(telegramMessage(shown, extra));
     await sendEmail(`${alertable.length} new job match(es)`, emailHtml(shown, extra));
   }
+
+  // Say it out loud when the alerts above are regex-only. Non-fatal on purpose:
+  // the run still did its job for everything that isn't held back, and failing
+  // the workflow would fire the "run FAILED" alarm for a billing problem.
+  if (warning) await sendTelegram(warning);
 
   // Warn only when several sources fail at once (a systemic issue like a network
   // blip), not for one persistently-broken tenant — that would spam every run.
@@ -393,6 +433,7 @@ async function main(): Promise<void> {
   }
   console.log(
     `[done] alerted ${Math.min(alertable.length, MAX_ALERTS_PER_RUN)}/${alertable.length}, recorded ${considered.length} new` +
+      (held.size ? `, ${held.size} held back unscreened` : "") +
       (failed.length ? `, ${failed.length} sources failed` : "") + ".",
   );
 }
