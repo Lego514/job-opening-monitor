@@ -69,7 +69,17 @@ jobs:
           # LLM classification (src/llm.ts). Unset = the run still works on the
           # regex path and says so via the checkEnv degraded notice.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The job-alert inbox (src/adapters/emailalerts.ts) — the only route to
+          # Handshake/LinkedIn/ZipRecruiter/Glassdoor inventory. Unset (which it
+          # is until the saved searches exist) = "[fetch] Email alerts: skipped
+          # (no inbox configured)" and zero rows; the run is otherwise identical.
+          # The mailbox is opened READ-ONLY, so this never mutates the inbox.
+          ALERT_INBOX_USER: ${{ secrets.ALERT_INBOX_USER }}
+          ALERT_INBOX_APP_PASSWORD: ${{ secrets.ALERT_INBOX_APP_PASSWORD }}
           # Optional behavior (set as repo Variables, not Secrets):
+          ALERT_INBOX_HOST: ${{ vars.ALERT_INBOX_HOST }}
+          ALERT_INBOX_MAILBOX: ${{ vars.ALERT_INBOX_MAILBOX }}
+          ALERT_INBOX_DAYS: ${{ vars.ALERT_INBOX_DAYS }}
           SKIP_NO_SPONSORSHIP: ${{ vars.SKIP_NO_SPONSORSHIP }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
           MAX_ALERTS_PER_RUN: ${{ vars.MAX_ALERTS_PER_RUN }}

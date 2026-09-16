@@ -191,6 +191,16 @@ export const COMPANIES: CompanySource[] = [
   // adapter's copy and the direct one (configured earlier) wins. Takes no config
   // — no file, no rows, never a failure.
   { name: "JobSpy", ats: "jobspy", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
+  //
+  // The boards that cannot be read at all: Handshake (school SSO), LinkedIn,
+  // ZipRecruiter, Glassdoor and the Cloudflare-guarded half of Indeed. Each one
+  // will happily EMAIL its matches if you save a search with alerts on, so this
+  // source reads those alert emails over IMAP rather than fighting the front
+  // door. Another aggregator (each row names its own employer — or the alert
+  // source, when the email doesn't say), and LAST for the same dedup reason as
+  // the lists above: a direct adapter's copy of a req has a real JD and wins.
+  // Takes no config here — ALERT_INBOX_* in the environment, or one skip line.
+  { name: "Email alerts", ats: "emailalerts", everifyGuess: "Unknown", sponsorsGuess: "Unknown" },
 ];
 
 // Server-side search terms (Workday) that narrow the pull; the include keywords

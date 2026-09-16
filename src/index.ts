@@ -9,6 +9,7 @@ import { fetchAshby } from "./adapters/ashby";
 import { fetchPeopleAdmin } from "./adapters/peopleadmin";
 import { fetchGithubList } from "./adapters/githublist";
 import { fetchJobSpy } from "./adapters/jobspy";
+import { fetchEmailAlerts } from "./adapters/emailalerts";
 import {
   fetchSmartRecruiters,
   fetchSmartRecruitersDetail,
@@ -112,6 +113,7 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
   if (c.ats === "peopleadmin") return fetchPeopleAdmin(c);
   if (c.ats === "githublist") return fetchGithubList(c);
   if (c.ats === "jobspy") return fetchJobSpy(c);
+  if (c.ats === "emailalerts") return fetchEmailAlerts(c);
   return [];
 }
 

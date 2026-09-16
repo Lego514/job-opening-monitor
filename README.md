@@ -7,7 +7,7 @@ being among the first applicants matters when you're job hunting on an OPT clock
 job turns that stream into a five-item **apply queue** at 08:00 ET — see
 [The daily apply queue](#the-daily-apply-queue).
 
-![stack](https://img.shields.io/badge/stack-Node%20%2B%20TypeScript-2f5bea) ![deps](https://img.shields.io/badge/runtime%20deps-0-1a9d6a) ![schedule](https://img.shields.io/badge/runs-GitHub%20Actions%20cron-697586)
+![stack](https://img.shields.io/badge/stack-Node%20%2B%20TypeScript-2f5bea) ![deps](https://img.shields.io/badge/runtime%20deps-4-1a9d6a) ![schedule](https://img.shields.io/badge/runs-GitHub%20Actions%20cron-697586)
 
 ## How it works
 
@@ -15,7 +15,8 @@ job turns that stream into a five-item **apply queue** at 08:00 ET — see
 config (companies + filters)
    → adapters (Workday/Greenhouse/Lever/    extract
      Oracle CE APIs + PageUp via browser
-     + JobSpy long tail, scraped first)
+     + JobSpy long tail, scraped first
+     + job-alert emails read over IMAP)
    → match (wide keyword + location net)    pre-filter
    → JD scan (sponsorship + salary)         enrich
    → diff vs. seen (Supabase)               dedup
@@ -39,8 +40,8 @@ config (companies + filters)
 - **Greenhouse + Lever adapters** — clean public board APIs. Add remote-friendly tech sponsors not on
   Workday: Affirm, Reddit, Robinhood, Datadog, Databricks, GitLab, Stripe, Airbnb, Lyft, Instacart,
   Pinterest, Dropbox, Twilio, Figma, Discord, SoFi, Chime, Asana (Greenhouse) and Spotify (Lever).
-  **111 sources across 9 ATS platforms**, plus three community job lists and the JobSpy long-tail
-  scraper — each returns its complete list every run, so dedup catches
+  **111 sources across 9 ATS platforms**, plus three community job lists, the JobSpy long-tail
+  scraper and the job-alert inbox — each returns its complete list every run, so dedup catches
   every new posting. Adding another is one config line.
 - **Ashby adapter** — the best-shaped source here: one unauthenticated call returns the whole board
   *including* the plain-text JD and a parsed pay range, so these roles need no per-role detail fetch
@@ -107,6 +108,58 @@ config (companies + filters)
     unmaintainable and would cut real employers with it; the LLM stage is what judges fit. The one hard
     drop is a row with no employer name — useless for the sponsor lookup, the tracker row and dedup.
   - Nothing scraped is ever committed: the JSON lives in the runner's temp dir and dies with the runner.
+- **Email-alert adapter — the boards that can't be read at all.** Handshake needs school SSO;
+  LinkedIn, ZipRecruiter, Glassdoor and part of Indeed sit behind Cloudflare, a WAF or hard rate
+  limits. None of that gets bypassed here — no proxy rotation, no CAPTCHA solving, no automated SSO
+  login. But **every one of those sites will push its matches to an inbox** if you save a search with
+  email alerts turned on, so [`src/adapters/emailalerts.ts`](src/adapters/emailalerts.ts) reads those
+  alert emails over IMAP instead. For Handshake's inventory this is the only viable route at all, and
+  it is structurally robust: no bot detection is involved, and a site redesigning its search UI
+  doesn't break it. **Ray has to set the saved searches up first** — see
+  [Turning the email-alert source on](#turning-the-email-alert-source-on).
+  - **Read-only, always.** The mailbox is opened with `{ readOnly: true }`: nothing is ever marked as
+    read, no flag is touched, nothing is deleted. The adapter only ever *reads* the last
+    `ALERT_INBOX_DAYS` (default 3) days, caps the messages it processes (200), wraps every message in
+    its own `try`/`catch` and holds a wall-clock budget (90s) so a slow inbox can't stall the cron.
+  - **It parses links, not layout.** These templates are regenerated constantly, so nothing pins an
+    HTML structure: the parser pulls *every* anchor out of the mail, keeps the ones whose URL shape
+    says "job posting", and takes the anchor text as the title. The shape table is one row per board
+    and is the intended extension point:
+
+    | source | URL shapes matched | job id |
+    |---|---|---|
+    | Handshake | `joinhandshake.com/…/jobs/{id}` (incl. `app.` / `{school}.` hosts, `/stu/`, `/emp/`) | path |
+    | LinkedIn | `linkedin.com/comm/jobs/view/{id}`, `linkedin.com/jobs/view/{slug-id}` | path tail (or `?currentJobId=`) |
+    | Indeed | `indeed.com/rc/clk`, `/viewjob`, `/m/viewjob`, `/pagead/clk`, `/job/…` | `?jk=` (sponsored rows have none → hashed URL) |
+    | ZipRecruiter | `ziprecruiter.com/jobs/…`, `/c/…`, `/k/…` | `?jid=`/`?lvk=`, else hashed URL |
+    | Glassdoor | `glassdoor.com/job-listing/…`, `/partner/jobListing.htm` | `?jobListingId=`/`?jl=`, else hashed URL |
+
+    Tracking wrappers are unwrapped first — both the `?url=`/`?targetUrl=`/`?redirect=` kind and the
+    SendGrid kind that hides the destination percent-encoded in its *path* — and per-send tracking
+    params are stripped, so two sends of the same job produce the same URL and the same key. An
+    `/rc/clk` link is rewritten to the canonical `/viewjob?jk=`, and LinkedIn's email-only `/comm/`
+    prefix is dropped, so an alert row still collapses against the same req from another source.
+    Unsubscribe / settings / "see all jobs" links and logo anchors with no text are dropped.
+  - **Company and location are read from the text around the anchor** — nearly always
+    "Company · City, ST" right after the title link, or the same pair on consecutive lines. The parser
+    drops the chrome ("Promoted", "Easy Apply", "3 days ago", the pay line), takes the first fragment
+    that reads like a place, and the fragment before it as the employer; a multi-location row keeps
+    every city. Where a card puts the employer *above* the title (Glassdoor) it looks backwards, but
+    only within the same table cell — inheriting the previous card's employer would be much worse than
+    having none. **When it genuinely can't tell, `company` becomes the alert source** ("Handshake")
+    rather than a guess, because the USCIS sponsor lookup, the tracker row and dedup all key on that
+    name. The title always survives, and the LLM screen works from title + location alone.
+  - **No JD exists** in an alert email, so `description` is left unset, `sponsorship` stays "unknown",
+    and these rows take no detail fetch. `buildUserPrompt` has an explicit "judge from the title and
+    location alone" branch for exactly this case (unit-tested).
+  - **Unset = skipped.** With no `ALERT_INBOX_USER`/`ALERT_INBOX_APP_PASSWORD` — the local dry run, and
+    CI until the secrets exist — the source logs `[fetch] Email alerts: skipped (no inbox configured)`
+    and returns zero rows. An unreachable server, a rejected password or a blown time budget are
+    logged and degrade to zero rows too: this adapter has no throw path.
+  - ⚠️ **The parsers are best-effort until they have been run against real alerts.** They were written
+    against each board's public URL formats and its known template shape, not against captured sends,
+    and the test fixtures are *synthesized* (the test file says so at the top). `npm run alerts --
+    --dump` is how they get corrected — see [Flags & tuning](#flags--tuning).
 - **Oracle Cloud CE adapter** — JPMorgan Chase (Wilmington DE hub, two CE sites), American Express and
   BNY, plus the **cap-exempt** hospitals Nemours Children's Health, Northwell Health and Mount Sinai.
 - **PageUp adapter** — the one source type that needs a real browser. PageUp serves plain
@@ -167,9 +220,12 @@ config (companies + filters)
 - **Real-location resolution** — the listing endpoint returns opaque "2 Locations" labels; the detail fetch
   resolves the actual cities and the location filter is re-applied, so out-of-area multi-location roles
   (e.g. Richmond/McLean VA) are correctly dropped instead of slipping through.
-- **Two runtime dependencies** — Playwright (for the one WAF-guarded source) and the Anthropic SDK.
-  Everything else is native `fetch`: ATS, Telegram, Resend, and Supabase REST. (Explicitly no
-  `supabase-js`: its client eagerly opens a realtime WebSocket that breaks under Node 20.)
+- **Four runtime dependencies** — Playwright (for the one WAF-guarded source), the Anthropic SDK, and
+  `imapflow` + `mailparser` (the job-alert inbox: an IMAP client and a MIME parser, both maintained by
+  the Nodemailer project; hand-rolling quoted-printable/base64/charset handling for mail we can't test
+  against is not a saving). Everything else is native `fetch`: ATS, Telegram, Resend, and Supabase
+  REST. (Explicitly no `supabase-js`: its client eagerly opens a realtime WebSocket that breaks under
+  Node 20.)
 - **Dedup** is a Supabase table (`monitor_seen_jobs`) so you never get the same alert twice. Within a
   run there are two axes: the `company:id` key, and the **normalized application URL**
   ([`normalizedUrlKey`](src/urlkey.ts) — host + path, minus `www`, tracking params, trailing slash and
@@ -192,8 +248,9 @@ config (companies + filters)
   allow-list of identifying params (`jk`, `currentJobId`) while still dropping tracking ones — without
   that, every Indeed row in a run would normalize to `indeed.com/viewjob` and collapse into one.
 - Pure logic (matching, prompt building, verdict parsing, sponsorship classification, remote detection,
-  normalization, ranking) is unit-tested with Vitest (226 tests) — the API is mocked, so `npm test` makes
-  no network calls — with defensive guards against malformed API records and malformed model output.
+  normalization, ranking, alert-email parsing) is unit-tested with Vitest (308 tests) — the API is
+  mocked and no IMAP connection is opened, so `npm test` makes no network calls — with defensive
+  guards against malformed API records, malformed model output and malformed email HTML.
 
 ## The LLM screen
 
@@ -352,6 +409,21 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
   Tuning (repo Variables in CI, env vars locally): `JOBSPY_SITES` (default `indeed,zip_recruiter`; add
   `linkedin` only with proxies), `JOBSPY_HOURS_OLD` (**72**), `JOBSPY_RESULTS` (**50**/query),
   `JOBSPY_BUDGET_SEC` (**150**), `JOBSPY_WORKERS` (**6**).
+- **Job-alert inbox** (optional, off unless `ALERT_INBOX_USER` + `ALERT_INBOX_APP_PASSWORD` are set):
+  ```bash
+  npm run alerts              # list recent alert emails + the job links each one yielded
+  npm run alerts -- --dump    # …and write every message that yielded ZERO links to disk
+  ```
+  This is the diagnostic that turns the best-effort parsers into real ones. It connects read-only,
+  prints each message's sender / subject / date and its link count, then writes any message that
+  produced **no** links to `$ALERT_DUMP_DIR` (default: a `job-alert-dumps` folder in the system temp
+  dir) and names the senders involved. A zero-link message is either not a job alert at all or a
+  template whose URL shape is missing from `JOB_URL_SHAPES` in
+  [`src/adapters/emailalerts.ts`](src/adapters/emailalerts.ts) — read the dumped HTML, add a row to
+  that table, and add a fixture to `test/emailalerts.test.ts`.
+  Tuning: `ALERT_INBOX_HOST` (**imap.gmail.com**), `ALERT_INBOX_PORT` (**993**), `ALERT_INBOX_MAILBOX`
+  (**INBOX**), `ALERT_INBOX_DAYS` (**3**), `ALERT_INBOX_MAX_MESSAGES` (**200**),
+  `ALERT_INBOX_BUDGET_SEC` (**90**).
 - `npm run build:sponsors` — rebuild `data/sponsors.json` from USCIS (network; never run inside the
   monitor). `-- --years 5` widens the fiscal-year window from the default 3.
 - Edit keyword / location / exclude lists and the company list in [`src/config.ts`](src/config.ts).
@@ -370,11 +442,49 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
    - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (from @BotFather / @userinfobot)
    - `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM` (optional email channel)
    - `ANTHROPIC_API_KEY` (optional — enables the LLM screen; without it the run falls back to regex)
+   - `ALERT_INBOX_USER` + `ALERT_INBOX_APP_PASSWORD` (optional — turns the Handshake / LinkedIn /
+     ZipRecruiter / Glassdoor email-alert source on; see the checklist below)
 3. **Run:** `node --env-file=.env node_modules/.bin/tsx src/index.ts` locally, or push and let
    [`.github/workflows/monitor.yml`](.github/workflows/monitor.yml) run it every ~15 min.
 4. **Daily queue:** [`.github/workflows/daily-digest.yml`](.github/workflows/daily-digest.yml) needs the
    same Supabase + Telegram + `TRACKER_USER_ID` secrets and nothing else (no Playwright, no Anthropic key).
    Trigger it by hand from the Actions tab any time; tick **dry run** to see the message without sending.
+
+## Turning the email-alert source on
+
+The adapter is live and inert: until the alerts exist it logs one skip line every run. Everything
+below is manual and one-time — the code cannot do any of it, because each step needs Ray's own
+logged-in session.
+
+1. **Make a dedicated inbox.** A Gmail address used for nothing else (e.g. `<you>+jobalerts@gmail.com`
+   is *not* enough — use a separate account, so a parser bug or a leaked app password can't reach
+   personal mail, and so `ALERT_INBOX_DAYS` isn't competing with hundreds of unrelated messages).
+2. **Create the app password.** In that account: turn on 2-Step Verification, then
+   <https://myaccount.google.com/apppasswords> → create one → copy the 16 characters **without the
+   spaces**. Make sure IMAP is enabled (Gmail → Settings → Forwarding and POP/IMAP → Enable IMAP).
+3. **Save a search with email alerts on each board**, signed in as Ray, sending to that inbox.
+   Suggested searches — mirror the monitor's own targeting, and prefer **daily** over "as it happens"
+   for the noisy boards:
+   - **Handshake** (`app.joinhandshake.com` → Jobs → filter → **Save search** → alerts on): *Data
+     Analyst*, *Data Scientist*, *Business Analyst*, *Software Engineer*; Job type **Full-Time**,
+     Work authorization **"Will sponsor"** where offered; locations Delaware, Philadelphia PA,
+     New York NY, plus one Remote/US search. This is the one board with no other route in.
+   - **LinkedIn** (run the search → **Create job alert**): same four titles × {Delaware, Philadelphia,
+     New York metro, United States (Remote)}, Experience level **Entry level / Associate**, Date
+     posted **Past week**.
+   - **Indeed** (search → *Get new jobs for this search by email*), **ZipRecruiter** (search → email
+     alerts), **Glassdoor** (search → **Create job alert**): same titles, Wilmington DE / Philadelphia
+     PA / New York NY / Remote.
+4. **Forward nothing else into that inbox.** Non-alert mail is harmless (it yields zero links), but it
+   eats the 200-message cap.
+5. **Add the two GitHub secrets** (Settings → Secrets and variables → Actions → New repository
+   secret): `ALERT_INBOX_USER` = the inbox address, `ALERT_INBOX_APP_PASSWORD` = the app password.
+   Optionally set `ALERT_INBOX_MAILBOX` / `ALERT_INBOX_DAYS` as repo **Variables**.
+6. **Verify, and fix what didn't parse.** Put the same two values in your local `.env`, wait for the
+   first alerts to land, then run `npm run alerts -- --dump`. Every message should report a non-zero
+   link count with a sane company and location; anything reporting **0** gets dumped to disk so the
+   URL-shape table or the company/location heuristics can be corrected against the real template.
+   Until that pass happens, treat this source's parsers as best-effort.
 
 ## Where the H-1B data comes from
 
@@ -456,6 +566,15 @@ whose petitions skip the lottery. Each run logs `[sponsor] matched N/M alertable
   `continue-on-error`, the library version is pinned in `scripts/jobspy-requirements.txt`, and a run
   where it produces nothing is a normal run. Rows also skew toward staffing agencies and reposts —
   that is what the LLM screen is for.
+- **The email-alert parsers have not met a real email yet.** They were written against each board's
+  public URL formats and its documented template shape, and every test fixture is synthesized. The URL
+  matching is the robust half (a job URL's shape changes far more slowly than a mail template); the
+  company/location derivation is the fragile half, and its failure mode is deliberately a *vague*
+  answer (`company: "Handshake"`) rather than a wrong one. `npm run alerts -- --dump` exists to close
+  that gap the moment real alerts start arriving.
+- **This source depends on saved searches Ray owns.** If a board disables an alert for inactivity, or
+  the alerts land in spam, the source silently returns fewer rows — the run log's
+  `[alerts] … N message(s) → M job link(s)` line is the only tell. Nothing here can recreate them.
 - GitHub Actions cron is best-effort (can lag a few minutes). Fine for this purpose.
 - **The sponsor index lags.** USCIS published FY2023 last; a company that only started sponsoring in
   FY2024–25 shows as "no filings found" until the next export lands. It is also keyed on the *petitioning

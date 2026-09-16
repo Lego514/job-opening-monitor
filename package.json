@@ -11,12 +11,14 @@
     "dry-run": "tsx src/index.ts --dry-run",
     "digest": "node --env-file-if-exists=.env --import tsx src/run-digest.ts",
     "check": "tsx scripts/check-sources.ts",
+    "alerts": "node --env-file-if-exists=.env --import tsx scripts/alerts-dump.ts",
     "keywords": "tsx scripts/keywords.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build:sponsors": "tsx scripts/build-sponsor-index.ts"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^20.14.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
@@ -24,6 +26,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
+    "imapflow": "^2.0.5",
+    "mailparser": "^3.9.28",
     "playwright": "^1.63.0"
   }
 }

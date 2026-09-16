@@ -11,7 +11,8 @@ export type Ats =
   | "smartrecruiters"
   | "peopleadmin"
   | "githublist"
-  | "jobspy";
+  | "jobspy"
+  | "emailalerts";
 
 export type YesNoUnknown = "Yes" | "No" | "Unknown";
 
@@ -58,6 +59,9 @@ export interface CompanySource {
   // JobSpy (jobspy) — also an aggregator, not an employer. It takes no config:
   // the rows come from the JSON file at $JOBSPY_FILE, written by the Python
   // scraper step before the run (src/adapters/jobspy.ts).
+  // Email alerts (emailalerts) — the same: no config here, credentials come from
+  // ALERT_INBOX_* in the environment (src/adapters/emailalerts.ts). Every row is
+  // an anchor out of a job-alert email, so it names its own employer.
   // sensible defaults for the tracker row when auto-adding:
   everifyGuess?: YesNoUnknown;
   sponsorsGuess?: YesNoUnknown;

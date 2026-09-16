@@ -438,3 +438,90 @@ reaches them; they have no board to add.
   suspect is `newPage()`/context creation or a WAF page that never settles. Mitigated with a
   job-level `timeout-minutes: 40`; root cause still open — consider wrapping each PageUp call in
   `Promise.race` with a hard deadline and recycling the browser context on timeout.
+
+---
+
+## Job-alert emails as a source (2026-09-16)
+
+**The problem it kills:** five job boards are unreadable by this monitor and always will be.
+Handshake is behind school SSO (and is where a large share of the new-grad inventory lives);
+LinkedIn, ZipRecruiter, Glassdoor and a growing share of Indeed are behind Cloudflare / a WAF / hard
+rate limits — the JobSpy source measured ZipRecruiter at **0 rows, 403 then 429, from every query on
+a residential IP**, and LinkedIn is off by default for the same reason. None of that is worth
+fighting: proxy rotation, CAPTCHA solving and automated SSO login are all explicitly out of scope.
+
+**The move:** stop pulling, start receiving. Every one of those sites will *push* matching jobs to an
+inbox if you save a search with email alerts on, so the monitor reads the alert emails over IMAP.
+For Handshake this is the only route that exists. It is also the most durable source here — no bot
+detection is involved, and a board redesigning its search UI doesn't break it.
+
+### Shipped
+- `src/adapters/emailalerts.ts` — pure `normalizeEmailAlerts(html, meta)` plus an IMAP read that
+  **cannot throw**. Read-only mailbox (`mailbox.open(…, { readOnly: true })`), `SINCE` window
+  (`ALERT_INBOX_DAYS`, 3), a 200-message cap, a 90s wall-clock budget, per-message `try`/`catch`.
+  Credentials from `ALERT_INBOX_USER` / `ALERT_INBOX_APP_PASSWORD` (+ optional `_HOST`, `_PORT`,
+  `_MAILBOX`, `_DAYS`, `_MAX_MESSAGES`, `_BUDGET_SEC`); unset ⇒
+  `[fetch] Email alerts: skipped (no inbox configured)` and zero rows.
+- `JOB_URL_SHAPES` — a one-row-per-board table (Handshake · LinkedIn · Indeed · ZipRecruiter ·
+  Glassdoor) giving host, path, where the job id lives and which params survive. Adding a board is
+  one row. Tracking wrappers are unwrapped first (`?url=`/`?targetUrl=`/`?redirect=`… **and** the
+  SendGrid shape that hides the destination percent-encoded in the path), per-send tracking params
+  are stripped, `/rc/clk` is rewritten to `/viewjob?jk=` and LinkedIn's `/comm/` prefix is dropped so
+  rows still collapse against the same req from a direct source.
+- `scripts/alerts-dump.ts` + `npm run alerts -- --dump` — the diagnostic. Prints sender/subject/date
+  and the link count per message, and writes every message that yielded **zero** links to
+  `$ALERT_DUMP_DIR`. This is the only way these parsers get corrected, since they were written with
+  no real email to look at.
+- `test/emailalerts.test.ts` — **73 tests** (308 total) over five synthesized provider fixtures plus
+  the URL table, the tracking unwrapper, the entity decoder, the company/location heuristics, merge
+  behaviour and `inboxConfig`. No network in `npm test`.
+- Two secrets in `monitor.yml`, docs in `.env.example` + README (including the manual setup checklist
+  Ray has to run through), one `COMPANIES` entry, one `Ats` member, two lines in `index.ts`,
+  `US_STATE_NAMES` exported from `match.ts`.
+- Deps: `imapflow` (IMAP) + `mailparser` (MIME) — both Nodemailer-project, both maintained.
+
+### Decisions worth not relitigating
+- **Parse links, not layout.** Alert templates are regenerated constantly and differ per send, so
+  nothing is pinned to an HTML structure: every anchor is extracted, and the *URL shape* decides
+  whether it's a job. A job URL's format changes far more slowly than a mail template's markup.
+- **An unknown employer becomes the alert source, never a guess.** `company` is the key for the USCIS
+  sponsor lookup, the tracker row and `postingKey` — a wrong name is much worse than a vague one, so
+  an underivable company becomes "Handshake"/"LinkedIn" and the LLM screen works from the title.
+- **The backward look for a company is fenced to the same table cell.** The first version walked back
+  to the previous anchor and cheerfully inherited the *previous job's* employer and location. Only
+  the company is taken from behind, never the location: an unknown location passes the filter, a
+  wrong one doesn't.
+- **Read-only, no exceptions.** Ray reads this inbox himself; the monitor must not mark anything read
+  or touch a flag. That also keeps a re-run idempotent.
+- **A second dependency (`mailparser`) was accepted.** Alert mail is multipart/alternative with
+  quoted-printable or base64 bodies and assorted charsets; hand-rolling that decoding for messages
+  we cannot test against would be the fragile choice, not the frugal one.
+- **Id-less links keep their query.** Indeed's sponsored `/pagead/clk` rows carry no `jk`. Stripping
+  the query (as the id-bearing shapes do) would collapse *every* sponsored row in a run onto the
+  single URL `indeed.com/pagead/clk`; instead the non-tracking query survives and the id is a hash of
+  it, so distinct jobs stay distinct and a re-alert still dedupes.
+- **An unclosed `<a>` can't swallow the next card.** The anchor regex refuses to cross another `<a`,
+  because this HTML is routinely invalid and a greedy match turned the following job's whole card
+  into a "title".
+- **Last in `COMPANIES`.** Same rule as the lists and JobSpy: `dedupe()` keeps the first copy of a
+  URL, and a direct adapter's copy has a JD.
+
+### Follow-ups
+- **The parsers have never seen a real email.** Fixtures are synthesized and say so. First real pass:
+  `npm run alerts -- --dump`, then fix the shape table / heuristics and replace the fixtures with
+  captured HTML. Expect the company/location derivation to need the most work — especially LinkedIn's
+  digest layout and Glassdoor's card header.
+- **Nothing monitors whether the alerts are still arriving.** If a board disables an alert for
+  inactivity, or the mail starts landing in spam, this source quietly returns fewer rows; only the
+  `[alerts] …` count line shows it. A "0 messages for N consecutive runs" warning needs the same
+  per-source state table the D1 follow-up wants.
+- **Gmail-specific assumptions.** Defaults are Gmail IMAP + an app password. Outlook/Office365 has
+  dropped basic auth for most tenants and would need OAuth2 (`imapflow` supports it), so a personal
+  Outlook inbox is not a drop-in.
+- **`ALERT_INBOX_DAYS=3` vs. a 15-minute cron** means every alert is re-parsed ~288 times. That costs
+  one IMAP session per run and is why the cap and budget exist; the rows dedupe on `company:id`, so
+  the only real cost is time. If the inbox gets busy, drop the window to 1 day rather than raising
+  the cap.
+- **Only the HTML part is parsed.** A text-only alert (rare, but Indeed offers one) yields nothing —
+  `textAsHtml` from mailparser covers the common case, but bare URLs in plain text carry no title and
+  a posting with no title can't pass the pre-filter anyway.

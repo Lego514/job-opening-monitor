@@ -20,7 +20,9 @@ export function locationBlocked(location: string, block: string[]): boolean {
   return block.some((b) => loc.includes(b.toLowerCase()));
 }
 
-const US_STATE_NAMES = [
+/** Exported for the email-alert parser, which has to decide whether a fragment
+ *  of text next to a job link is a place or an employer name. */
+export const US_STATE_NAMES = [
   "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
   "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
   "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
