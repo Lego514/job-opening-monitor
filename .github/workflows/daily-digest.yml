@@ -4,10 +4,15 @@ name: Daily apply queue
 # today?" — once a morning, as a five-item checklist. GitHub cron is UTC-only
 # and has no DST, so two schedules are declared; `npm run digest` sends at most
 # one queue per America/New_York day, so whichever run lands first wins.
+#
+# Off the hour on purpose: GitHub's scheduler is most congested at :00, and the
+# old "0 12" / "0 13" runs landed 4.5-6 hours late (16:31-18:21 UTC, 2026-09-20
+# to 09-22). Since the first run of the New York day wins, the earlier line is
+# the one that delivers year-round; the later one is the backup if it's dropped.
 on:
   schedule:
-    - cron: "0 12 * * *" # 08:00 EDT (Mar–Nov)
-    - cron: "0 13 * * *" # 08:00 EST (Nov–Mar)
+    - cron: "47 11 * * *" # 07:47 EDT / 06:47 EST — delivers
+    - cron: "47 12 * * *" # 08:47 EDT / 07:47 EST — backup
   workflow_dispatch:
     inputs:
       dry_run:
