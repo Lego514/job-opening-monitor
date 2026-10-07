@@ -254,6 +254,36 @@ config (companies + filters)
   mocked and no IMAP connection is opened, so `npm test` makes no network calls — with defensive
   guards against malformed API records, malformed model output and malformed email HTML.
 
+## Source health
+
+Every run measures each source, not just whether it returned postings:
+
+- **Response time.** Every adapter calls the global `fetch`, so one wrapper (`instrumentFetch` in
+  [`src/health.ts`](src/health.ts)) times every request. `AsyncLocalStorage` tells it which source a
+  request belongs to, so the adapters didn't change. Each source gets p50 and p95 latency per run.
+- **Which layer failed.** "FAILED" used to be all a run said. Now each failure is classified, bottom
+  of the stack up, because each one has a different fix:
+
+  | Layer | Meaning | Usual fix |
+  |---|---|---|
+  | `dns` | the hostname didn't resolve | the board moved; find its new URL |
+  | `tcp` | refused, reset, unreachable, or connect timeout | their outage, or the runner's IP is blocked |
+  | `tls` | certificate or handshake failure | wait, or report it to them |
+  | `timeout` | connected, but no full answer before our deadline | raise the timeout or page smaller |
+  | `rate_limited` | HTTP 429 | slow down or space out requests |
+  | `http_4xx` / `http_5xx` | the server answered with an error | 4xx: the tenant/token changed; 5xx: their outage |
+  | `parse` | a good status, but not the expected body | the API changed shape; update the adapter |
+
+  The layer comes from the error code in undici's `cause` chain (`ENOTFOUND`, `ECONNREFUSED`,
+  `CERT_HAS_EXPIRED`, …), the adapters' `HTTP nnn` messages, or the last status the source received.
+- **Reporting.** One `[health]` line in the log, and a full table (failures first, then the slowest
+  sources) in the GitHub Actions job summary of every run.
+- **Across runs.** The monitor runs every ~15 minutes, so one failed run is noise. Live runs keep one
+  row per source in `monitor_source_health` ([`supabase/0005_source_health.sql`](supabase/0005_source_health.sql))
+  and send one Telegram alert when a source has failed **4 runs in a row** (about an hour), naming the
+  layer, and one when it recovers. Until the table exists, the run still prints and publishes the
+  per-run report.
+
 ## The LLM screen
 
 Three problems the regex pipeline could not solve, all of them the same problem: a title is not a role.
@@ -493,8 +523,9 @@ Configure targets and filters in [`src/config.ts`](src/config.ts).
 ## Going live
 
 1. **State tables:** run [`supabase/0002_monitor.sql`](supabase/0002_monitor.sql),
-   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql) and
-   [`supabase/0004_digest.sql`](supabase/0004_digest.sql) in your Supabase SQL editor.
+   [`supabase/0003_llm_verdicts.sql`](supabase/0003_llm_verdicts.sql),
+   [`supabase/0004_digest.sql`](supabase/0004_digest.sql) and
+   [`supabase/0005_source_health.sql`](supabase/0005_source_health.sql) in your Supabase SQL editor.
    Until `0003` is applied the run still works — it logs `[llm] verdict cache read/write failed` and
    simply re-pays for verdicts it can't cache. Until `0004` is applied the monitor also still works (it
    logs `[candidates] save failed`), but the daily queue has nothing to read and says exactly which file

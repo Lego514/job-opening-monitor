@@ -168,7 +168,7 @@ Reviewed 2026-07-14. Ordered by priority. Status: `[ ]` todo · `[~]` in progres
     (`If-None-Match` against the raw ETag) would make most runs a 304; (b) the first live run will
     surface ~200 backlogged matches at once — run `npm start -- --seed` first, or accept the
     `MAX_ALERTS_PER_RUN` trickle.
-- **D1+** — per-source consecutive-failure state table.
+- **D1+** `[x]` (2026-10-07) — per-source consecutive-failure state table: `monitor_source_health` (supabase/0005), `src/health.ts`. Alerts once after 4 failed runs in a row, and on recovery. See README "Source health".
 
 ---
 

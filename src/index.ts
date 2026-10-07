@@ -23,7 +23,24 @@ import {
   loadLlmVerdicts,
   saveLlmVerdicts,
   saveCandidates,
+  loadSourceHealth,
+  saveSourceHealth,
 } from "./state";
+import {
+  classifyFailure,
+  healthLine,
+  healthMarkdown,
+  instrumentFetch,
+  lastStatusFor,
+  nextState,
+  recordedRequests,
+  summarize,
+  transitionMessage,
+  withSource,
+  type SourceHealth,
+  type SourceOutcome,
+} from "./health";
+import { appendFileSync } from "node:fs";
 import { classifyAll, llmEnabled, llmFailureWarning, LLM_MODEL } from "./llm";
 import { gateSummary, worthClassifying } from "./screen";
 import { addToTracker } from "./tracker";
@@ -127,24 +144,63 @@ async function fetchCompany(c: CompanySource): Promise<Posting[]> {
 interface CollectResult {
   all: Posting[];
   failed: string[]; // company names whose fetch hard-failed this run
+  health: SourceHealth[]; // one row per source: outcome, failed layer, latency
 }
 
 async function collectAll(): Promise<CollectResult> {
+  instrumentFetch();
   const all: Posting[] = [];
   const failed: string[] = [];
+  const outcomes: SourceOutcome[] = [];
   for (const c of COMPANIES) {
     try {
-      const postings = await fetchCompany(c);
+      const postings = await withSource(c.name, () => fetchCompany(c));
       for (const p of postings) p.capExempt = c.capExempt ?? false;
       console.log(`[fetch] ${c.name}: ${postings.length}`);
       all.push(...postings);
+      outcomes.push({ source: c.name, ok: true });
     } catch (e) {
       // One bad source must not abort the whole run.
-      console.error(`[fetch] ${c.name}: FAILED — ${(e as Error).message}`);
+      const layer = classifyFailure(e, lastStatusFor(c.name));
+      console.error(`[fetch] ${c.name}: FAILED (${layer}) — ${(e as Error).message}`);
       failed.push(c.name);
+      outcomes.push({ source: c.name, ok: false, layer, message: (e as Error).message });
     }
   }
-  return { all, failed };
+  return { all, failed, health: summarize(outcomes, recordedRequests()) };
+}
+
+/**
+ * Print the run's source health, publish it as the GitHub Actions job summary,
+ * and (live runs only) fold it into the per-source state so a source that stays
+ * down alerts once. Never fatal: health reporting must not cost the job alerts.
+ */
+async function reportHealth(health: SourceHealth[], persist: boolean): Promise<void> {
+  console.log(healthLine(health));
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryFile) {
+    try {
+      appendFileSync(summaryFile, healthMarkdown(health));
+    } catch (e) {
+      console.warn(`[health] could not write the job summary: ${(e as Error).message}`);
+    }
+  }
+  if (!persist) return;
+  try {
+    const prev = await loadSourceHealth();
+    const now = new Date().toISOString();
+    const changes = health.map((h) => nextState(prev.get(h.source), h, now));
+    await saveSourceHealth(changes.map((c) => c.state));
+    const msg = transitionMessage(changes);
+    if (msg) await sendTelegram(msg);
+  } catch (e) {
+    const err = e as Error;
+    console.warn(
+      err.name === "MissingTableError"
+        ? "[health] table monitor_source_health is missing — run supabase/0005_source_health.sql once in the Supabase SQL editor."
+        : `[health] could not update per-source state: ${err.message}`,
+    );
+  }
 }
 
 /** Fetch the JD and attach sponsorship + salary signals (Workday postings only). */
@@ -312,7 +368,8 @@ async function main(): Promise<void> {
   if (missing.length > 0) throw new Error(missingEnvMessage(missing, mode));
   for (const d of degraded) console.warn(`[env] ${d}`);
 
-  const { all: fetched, failed } = await collectAll();
+  const { all: fetched, failed, health } = await collectAll();
+  await reportHealth(health, !DRY_RUN && !SEED);
   // Roles in the DE area get the wider filter; everywhere else stays strict.
   const filtersFor = (p: Posting) => (isDelaware(p.location) ? LOCAL_FILTERS : FILTERS);
   const prefiltered = dedupe(fetched.filter((p) => matches(p, filtersFor(p))));
@@ -426,8 +483,8 @@ async function main(): Promise<void> {
   if (warning) await sendTelegram(warning);
 
   // Warn only when several sources fail at once (a systemic issue like a network
-  // blip), not for one persistently-broken tenant — that would spam every run.
-  // (Per-source consecutive-failure tracking would need a state table; see backlog.)
+  // blip). One persistently-broken source is reported once, by reportHealth,
+  // after UNHEALTHY_AFTER consecutive failed runs.
   if (failed.length >= 3) {
     await sendTelegram(`⚠️ ${failed.length} sources failed to fetch this run: ${failed.join(", ")}`);
   }

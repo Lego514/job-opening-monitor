@@ -1,3 +1,4 @@
+import type { FailureLayer, HealthState } from "./health";
 import {
   type Candidate,
   type CandidateRow,
@@ -335,4 +336,49 @@ export async function loadActedUrlKeys(): Promise<Set<string>> {
     console.error(`[digest] tracker status read failed: ${(e as Error).message}`);
     return new Set();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Per-source health across runs (`monitor_source_health`, see
+// supabase/0005_source_health.sql). One row per source, overwritten each run.
+
+interface SourceHealthRow {
+  source: string;
+  consecutive_failures: number;
+  last_ok_at: string | null;
+  last_failure_at: string | null;
+  last_failure_layer: string | null;
+  last_p95_ms: number | null;
+}
+
+export async function loadSourceHealth(): Promise<Map<string, HealthState>> {
+  const rows = (await sbGetAll("monitor_source_health?select=*", "monitor_source_health")) as SourceHealthRow[];
+  return new Map(
+    rows.map((r) => [
+      r.source,
+      {
+        source: r.source,
+        consecutiveFailures: r.consecutive_failures,
+        lastOkAt: r.last_ok_at,
+        lastFailureAt: r.last_failure_at,
+        lastFailureLayer: (r.last_failure_layer as FailureLayer | null) ?? null,
+        lastP95Ms: r.last_p95_ms,
+      },
+    ]),
+  );
+}
+
+export async function saveSourceHealth(states: HealthState[]): Promise<void> {
+  if (states.length === 0) return;
+  const updated_at = new Date().toISOString();
+  const rows = states.map((s) => ({
+    source: s.source,
+    consecutive_failures: s.consecutiveFailures,
+    last_ok_at: s.lastOkAt,
+    last_failure_at: s.lastFailureAt,
+    last_failure_layer: s.lastFailureLayer,
+    last_p95_ms: s.lastP95Ms,
+    updated_at,
+  }));
+  await sbInsert("monitor_source_health", rows, "resolution=merge-duplicates", "saveSourceHealth");
 }
