@@ -6,9 +6,13 @@ import {
   classifyAll,
   isCreditExhausted,
   llmFailureWarning,
+  creditAlarm,
+  creditEscalationMessage,
+  LLM_HEALTH_SOURCE,
   LLM_MODEL,
   llmEnabled,
 } from "../src/llm";
+import { type HealthState, UNHEALTHY_AFTER } from "../src/health";
 import { type LlmVerdict, type Posting } from "../src/types";
 
 const mk = (over: Partial<Posting> = {}): Posting => ({
@@ -357,6 +361,91 @@ describe("llmFailureWarning", () => {
     const msg = llmFailureWarning({ failed: 2, held: new Set(["a", "b"]), creditExhausted: false });
     expect(msg).toContain("partly failed (2 call(s))");
     expect(msg).toContain("2 role(s) held back");
+  });
+});
+
+describe("creditAlarm", () => {
+  /** Run `outcomes` through the alarm in order, `hoursApart` between runs. */
+  function play(outcomes: ("ok" | "exhausted")[], start: string, hoursApart: number) {
+    let state: HealthState | undefined;
+    const actions = outcomes.map((o, i) => {
+      const now = new Date(Date.parse(start) + i * hoursApart * 3_600_000).toISOString();
+      const r = creditAlarm(state, o, now);
+      state = r.state;
+      return r.action;
+    });
+    return { actions, state: state! };
+  }
+
+  it("warns per run early in an outage, then escalates at UNHEALTHY_AFTER", () => {
+    const { actions, state } = play(Array(UNHEALTHY_AFTER).fill("exhausted"), "2026-10-20T12:00:00Z", 1);
+    expect(actions).toEqual([...Array(UNHEALTHY_AFTER - 1).fill("warn"), "escalate"]);
+    expect(state.source).toBe(LLM_HEALTH_SOURCE);
+    expect(state.consecutiveFailures).toBe(UNHEALTHY_AFTER);
+  });
+
+  it("goes quiet for the rest of that day instead of repeating the warning", () => {
+    // 12:00..18:00 UTC = 08:00..14:00 in New York: one day.
+    const { actions } = play(Array(UNHEALTHY_AFTER + 3).fill("exhausted"), "2026-10-20T12:00:00Z", 1);
+    expect(actions.slice(UNHEALTHY_AFTER)).toEqual(["quiet", "quiet", "quiet"]);
+  });
+
+  it("escalates again on the first failing run of the next New York day", () => {
+    // Regression: the 2026-09-16..10-21 outage sent ~200 identical ⚠️ and nothing louder.
+    // Four runs a day, 6h apart, at 09/15/21/03 ET from 10/20 09:00 ET.
+    const { actions } = play(Array(10).fill("exhausted"), "2026-10-20T13:00:00Z", 6);
+    expect(UNHEALTHY_AFTER).toBe(4); // the sequence below is written for 4
+    expect(actions).toEqual([
+      "warn", "warn", "warn", // 10/20
+      "escalate", "quiet", "quiet", "quiet", // 10/21 03:00 ET reaches the threshold
+      "escalate", "quiet", "quiet", // 10/22: first failing run of the day
+    ]);
+  });
+
+  it("reads the day in New York, not UTC", () => {
+    const { state } = play(Array(UNHEALTHY_AFTER).fill("exhausted"), "2026-10-20T20:00:00Z", 1);
+    // Last failure was 2026-10-20T23:00Z (19:00 ET); 03:00Z the next UTC day is still 10/20 ET.
+    expect(creditAlarm(state, "exhausted", "2026-10-21T03:00:00Z").action).toBe("quiet");
+    expect(creditAlarm(state, "exhausted", "2026-10-21T05:00:00Z").action).toBe("escalate");
+  });
+
+  it("announces recovery once, only after an escalation", () => {
+    const down = play(Array(UNHEALTHY_AFTER).fill("exhausted"), "2026-10-20T12:00:00Z", 1).state;
+    const back = creditAlarm(down, "ok", "2026-10-20T20:00:00Z");
+    expect(back.action).toBe("recovered");
+    expect(back.state.consecutiveFailures).toBe(0);
+    expect(back.state.lastOkAt).toBe("2026-10-20T20:00:00Z");
+    expect(creditAlarm(back.state, "ok", "2026-10-20T21:00:00Z").action).toBeNull();
+
+    const blip = play(["exhausted", "ok"], "2026-10-20T12:00:00Z", 1);
+    expect(blip.actions).toEqual(["warn", null]);
+  });
+});
+
+describe("creditEscalationMessage", () => {
+  const state: HealthState = {
+    source: LLM_HEALTH_SOURCE,
+    consecutiveFailures: 31,
+    lastOkAt: "2026-10-15T14:00:00Z",
+    lastFailureAt: "2026-10-21T14:00:00Z",
+    lastFailureLayer: "http_4xx",
+    lastP95Ms: null,
+  };
+
+  it("says what is lost, how to fix it, and why the run is red", () => {
+    const msg = creditEscalationMessage(state, 777);
+    expect(msg).toContain("🚨🚨 LLM SCREENING IS DOWN");
+    expect(msg).toContain("31 runs in a row (last worked Thu, Oct 15)");
+    expect(msg).toContain("777 best-fit role(s)");
+    expect(msg).toContain("console.anthropic.com → Settings → Billing");
+    expect(msg).toContain("marked FAILED on purpose");
+    expect(msg).not.toMatch(/[<>&]/); // sent with parse_mode HTML
+  });
+
+  it("copes with no recorded success", () => {
+    expect(creditEscalationMessage({ ...state, lastOkAt: null }, 1)).toContain(
+      "down since before this alarm existed",
+    );
   });
 });
 

@@ -41,7 +41,17 @@ import {
   type SourceOutcome,
 } from "./health";
 import { appendFileSync } from "node:fs";
-import { classifyAll, llmEnabled, llmFailureWarning, LLM_MODEL } from "./llm";
+import {
+  classifyAll,
+  creditAlarm,
+  creditEscalationMessage,
+  CREDIT_RECOVERED_MESSAGE,
+  type CreditAction,
+  LLM_HEALTH_SOURCE,
+  llmEnabled,
+  llmFailureWarning,
+  LLM_MODEL,
+} from "./llm";
 import { gateSummary, worthClassifying } from "./screen";
 import { addToTracker } from "./tracker";
 import { sendTelegram } from "./notify/telegram";
@@ -327,9 +337,11 @@ interface ClassifyOutcome {
   held: Set<string>;
   /** A non-fatal Telegram warning, when screening degraded this run. */
   warning: string | null;
+  /** What this run says about the Anthropic credit; null when no call told us. */
+  credit: "ok" | "exhausted" | null;
 }
 
-const NO_CLASSIFICATION: ClassifyOutcome = { held: new Set(), warning: null };
+const NO_CLASSIFICATION: ClassifyOutcome = { held: new Set(), warning: null, credit: null };
 
 /**
  * Run the LLM classification stage over `posts`, attaching verdicts in place.
@@ -357,7 +369,34 @@ async function classifyStage(
       `(${r.cached} from cache, ${r.failed} failed, ${r.deferred} deferred, ` +
       `${r.skipped} gated out) — ${LLM_MODEL}`,
   );
-  return { held: r.held, warning: llmFailureWarning(r) };
+  return {
+    held: r.held,
+    warning: llmFailureWarning(r),
+    credit: r.creditExhausted ? "exhausted" : r.classified > 0 ? "ok" : null,
+  };
+}
+
+/**
+ * Fold this run's credit outcome into the cross-run streak (see creditAlarm) and
+ * send the escalation or recovery message it calls for. Never fatal: if the
+ * state can't be read or written, the run falls back to the plain warning.
+ */
+async function trackCredit(
+  credit: ClassifyOutcome["credit"],
+  held: number,
+): Promise<CreditAction> {
+  if (!credit) return null; // no call this run: neither reset nor extend the streak
+  try {
+    const prev = (await loadSourceHealth()).get(LLM_HEALTH_SOURCE);
+    const { state, action } = creditAlarm(prev, credit, new Date().toISOString());
+    await saveSourceHealth([state]);
+    if (action === "escalate") await sendTelegram(creditEscalationMessage(state, held));
+    if (action === "recovered") await sendTelegram(CREDIT_RECOVERED_MESSAGE);
+    return action;
+  } catch (e) {
+    console.warn(`[llm] could not update the credit streak: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 async function main(): Promise<void> {
@@ -441,7 +480,7 @@ async function main(): Promise<void> {
   // first, so if the ceiling bites it bites the least promising roles.
   const queue = selectAlertable(fresh, { ...opts, skipLlmReject: false });
   console.log(gateSummary(queue));
-  const { held, warning } = await classifyStage(queue, LLM_MAX_PER_RUN, true);
+  const { held, warning, credit } = await classifyStage(queue, LLM_MAX_PER_RUN, true);
   // A held-back posting was either never looked at (ceiling, or a run that gave
   // up on a dead API) or looked at and failed. Alerting on it unscreened AND
   // marking it seen would burn it permanently, so hold it back entirely: it
@@ -477,10 +516,14 @@ async function main(): Promise<void> {
     await sendEmail(`${alertable.length} new job match(es)`, emailHtml(shown, extra));
   }
 
-  // Say it out loud when the alerts above are regex-only. Non-fatal on purpose:
-  // the run still did its job for everything that isn't held back, and failing
-  // the workflow would fire the "run FAILED" alarm for a billing problem.
-  if (warning) await sendTelegram(warning);
+  // Say it out loud when the alerts above are regex-only. One degraded run is
+  // non-fatal on purpose: it still did its job for everything that isn't held
+  // back. A credit outage that outlasts UNHEALTHY_AFTER runs swaps this per-run
+  // warning for the once-a-day escalation (trackCredit).
+  const creditAction = await trackCredit(credit, held.size);
+  if (warning && creditAction !== "escalate" && creditAction !== "quiet") {
+    await sendTelegram(warning);
+  }
 
   // Warn only when several sources fail at once (a systemic issue like a network
   // blip). One persistently-broken source is reported once, by reportHealth,
@@ -493,6 +536,12 @@ async function main(): Promise<void> {
       (held.size ? `, ${held.size} held back unscreened` : "") +
       (failed.length ? `, ${failed.length} sources failed` : "") + ".",
   );
+
+  // Last, so every alert above has already gone out: the red run is the alarm.
+  if (creditAction === "escalate") {
+    console.error("[llm] credit exhausted for several runs — failing this run on purpose (once a day).");
+    process.exitCode = 1;
+  }
 }
 
 // The PageUp adapter's headless Chromium keeps the event loop alive, so it has

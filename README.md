@@ -414,8 +414,15 @@ run. On top of that:
   ⚠️ LLM classification unavailable (credit/API error) — 82 role(s) held back, alerts are regex-only
   this run. Top up the Anthropic credit to resume screening.
   ```
-  Non-fatal on purpose: the run did its job for everything not held back, and failing the workflow would
-  fire the "run FAILED" alarm for a billing problem.
+  Non-fatal on purpose: the run did its job for everything not held back.
+- **An outage that persists escalates, once a day.** That per-run ⚠️ went out ~200 times between
+  2026-09-16 and 2026-10-21 and was scrolled past while five weeks of best-fit roles sat held back. So the
+  credit streak is kept across runs (one `llm:anthropic` row in `monitor_source_health`, no new
+  migration). Once it reaches `UNHEALTHY_AFTER` (4) runs in a row, the per-run warning stops. Instead,
+  the first failing run of each America/New_York day sends a loud `🚨🚨 LLM SCREENING IS DOWN` Telegram
+  (roles held back, what ages out, how to fix it). That run also **fails on purpose** after its alerts
+  are sent: a red X in the Actions tab plus GitHub's failure email. A `🟢 LLM screening is back` message
+  closes the outage.
 
 ## The daily apply queue
 

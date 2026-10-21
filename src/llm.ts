@@ -32,6 +32,8 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { todayKeyNY, todayLabelNY } from "./digest";
+import { type HealthState, nextState, UNHEALTHY_AFTER } from "./health";
 import { type LlmVerdict, type Posting, postingKey } from "./types";
 
 /** Cheapest current model; this is a short, well-specified classification. */
@@ -289,6 +291,82 @@ export function llmFailureWarning(r: {
     : `⚠️ LLM classification partly failed (${r.failed} call(s)) — ${n} role(s) held back ` +
         `for the next run; the alerts below are regex-only.`;
 }
+
+// ---------------------------------------------------------------------------
+// Across runs. The per-run warning above went out on every run from 2026-09-16
+// to 2026-10-21 — ~200 of them — and five weeks of best-fit roles sat held back,
+// because one more ⚠️ in a busy chat is easy to scroll past. So once a credit
+// outage outlives UNHEALTHY_AFTER runs, the per-run warning stops and the run
+// escalates ONCE A DAY instead: a loud Telegram plus a deliberately failed run
+// (red X in the Actions tab, GitHub's failure email).
+//
+// The streak is one more row in `monitor_source_health`: the Anthropic API is an
+// external dependency like any job source, and reusing the table means there is
+// no new migration to run.
+
+/** Row key in monitor_source_health. The colon keeps it apart from source names. */
+export const LLM_HEALTH_SOURCE = "llm:anthropic";
+
+/**
+ * What a run does about the credit state:
+ *   warn      — early in an outage: the plain per-run warning, as before
+ *   escalate  — the loud daily message, and fail the run
+ *   quiet     — already escalated today: no per-run warning at all
+ *   recovered — credit is back after an escalation: say so once
+ */
+export type CreditAction = "warn" | "escalate" | "quiet" | "recovered" | null;
+
+/**
+ * Fold this run's credit outcome into the stored streak. Pure.
+ *
+ * "Once a day" is "the first failing run of a new America/New_York day", read
+ * off the previous failure's timestamp — so it needs no extra column.
+ */
+export function creditAlarm(
+  prev: HealthState | undefined,
+  outcome: "ok" | "exhausted",
+  now: string,
+): { state: HealthState; action: CreditAction } {
+  const ok = outcome === "ok";
+  const { state, transition } = nextState(
+    prev,
+    {
+      source: LLM_HEALTH_SOURCE,
+      ok,
+      ...(ok ? {} : { layer: "http_4xx" as const }), // the billing error is a 400
+      requests: 0,
+      errors: 0,
+      p50Ms: null,
+      p95Ms: null,
+    },
+    now,
+  );
+  if (ok) return { state, action: transition === "recovered" ? "recovered" : null };
+  if (transition === "became_unhealthy") return { state, action: "escalate" };
+  if (state.consecutiveFailures < UNHEALTHY_AFTER) return { state, action: "warn" };
+  const newDay =
+    !prev?.lastFailureAt || todayKeyNY(Date.parse(prev.lastFailureAt)) !== todayKeyNY(Date.parse(now));
+  return { state, action: newDay ? "escalate" : "quiet" };
+}
+
+/** The once-a-day escalation. Says what is lost, what to do, and why the run is red. */
+export function creditEscalationMessage(state: HealthState, held: number): string {
+  const since = state.lastOkAt
+    ? `last worked ${todayLabelNY(Date.parse(state.lastOkAt))}`
+    : "down since before this alarm existed";
+  return [
+    `🚨🚨 LLM SCREENING IS DOWN — Anthropic credit exhausted, ` +
+      `${state.consecutiveFailures} runs in a row (${since}).`,
+    `${held} best-fit role(s) (DE-local, cap-exempt, NYC, remote-US) are held back and NOT alerted. ` +
+      `They come back once credit is restored — unless they age out first (14 days; Indeed 72h).`,
+    `Fix: console.anthropic.com → Settings → Billing → buy credits. The API key is fine.`,
+    `This run is marked FAILED on purpose. This message repeats once a day until fixed.`,
+  ].join("\n\n");
+}
+
+export const CREDIT_RECOVERED_MESSAGE =
+  "🟢 LLM screening is back — Anthropic credit restored. Held-back roles are being " +
+  "screened again, best-fit first, up to the per-run ceiling.";
 
 interface OneResult {
   verdict: LlmVerdict | null;
