@@ -97,6 +97,9 @@ jobs:
       # The monitor needs monitoring: a crashing cron is otherwise invisible
       # until you notice the alerts stopped. (This is exactly what happened
       # 2026-07-01..14 — every run failed on unset secrets, unnoticed.)
+      # A run can also fail on purpose AFTER sending its alerts (once a day while
+      # the Anthropic credit stays exhausted), so this message doesn't claim
+      # "no alerts".
       - name: Notify on failure
         if: failure()
         env:
@@ -110,5 +113,5 @@ jobs:
           fi
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=🚨 Job monitor run FAILED — no alerts this run. ${RUN_URL}" \
+            --data-urlencode "text=🚨 Job monitor run FAILED — open the log for why: ${RUN_URL}" \
             -o /dev/null
