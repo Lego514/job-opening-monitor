@@ -9,6 +9,8 @@ hunting on an OPT clock. A second, **daily** job turns that stream into a five-i
 
 ![stack](https://img.shields.io/badge/stack-Node%20%2B%20TypeScript-2f5bea) ![deps](https://img.shields.io/badge/runtime%20deps-4-1a9d6a) ![schedule](https://img.shields.io/badge/runs-GitHub%20Actions%20cron-697586)
 
+![The pipeline: more than 110 sources (over 22,000 postings a run) go through one dedupe step, which sends new roles to Telegram and email and fills an apply queue of five a day](docs/pipeline.gif)
+
 ## How it works
 
 ```
