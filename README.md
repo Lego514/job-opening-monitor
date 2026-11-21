@@ -252,7 +252,7 @@ config (companies + filters)
   allow-list of identifying params (`jk`, `currentJobId`) while still dropping tracking ones — without
   that, every Indeed row in a run would normalize to `indeed.com/viewjob` and collapse into one.
 - Pure logic (matching, prompt building, verdict parsing, sponsorship classification, remote detection,
-  normalization, ranking, alert-email parsing) is unit-tested with Vitest (308 tests) — the API is
+  normalization, ranking, alert-email parsing) is unit-tested with Vitest (350 tests) — the API is
   mocked and no IMAP connection is opened, so `npm test` makes no network calls — with defensive
   guards against malformed API records, malformed model output and malformed email HTML.
 
